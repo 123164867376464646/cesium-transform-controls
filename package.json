@@ -1,0 +1,45 @@
+{
+  "name": "cesium-transform-controls",
+  "version": "1.0.0",
+  "description": "Interactive transform controls (translate, rotate, scale) for Cesium entities and primitives",
+  "main": "./dist/cesium-transform-controls.umd.js",
+  "module": "./dist/cesium-transform-controls.es.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/cesium-transform-controls.es.js",
+      "require": "./dist/cesium-transform-controls.umd.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "cesium",
+    "transform",
+    "controls",
+    "gizmo"
+  ],
+  "author": "lin2101",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/123164867376464646/cesium-transform-controls.git"
+  },
+  "peerDependencies": {
+    "cesium": ">=1.120.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "cesium": "^1.135.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.2",
+    "vite-plugin-dts": "^4.5.4"
+  }
+}
