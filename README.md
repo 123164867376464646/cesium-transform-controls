@@ -115,6 +115,32 @@ gizmo.attach(viewer)
 
 点击场景中的对象时，Gizmo 会自动识别并挂载到该对象上。点击空白处可以取消选中。
 
+### 方式三:三层控制机制
+
+Gizmo 提供了三个不同层级的控制方式:
+
+```typescript
+const gizmo = new Gizmo()
+
+// 1️⃣ 创建/销毁 - 资源层面
+gizmo.attach(viewer)    // 将 Gizmo 添加到场景
+gizmo.detach()          // 从场景中完全移除
+
+// 2️⃣ 显示/隐藏 - 视觉层面
+gizmo._transPrimitives._show = true   // 显示 Gizmo
+gizmo._transPrimitives._show = false  // 隐藏 Gizmo（不参与渲染）
+
+// 3️⃣ 启用/禁用 - 交互层面
+gizmo.setEnabled(true)   // 启用交互（可见且可操作）
+gizmo.setEnabled(false)  // 禁用交互（可见但不响应鼠标事件）
+```
+
+**使用场景：**
+
+- `attach/detach`: 完整的生命周期管理，适合创建和销毁时使用
+- `show`: 临时隐藏 Gizmo，但保持其在场景中，适合需要快速显示/隐藏的场景
+- `setEnabled`: 显示 Gizmo 作为视觉提示，但禁止用户操作，适合锁定对象、只读模式等场景
+
 ## API
 
 ### Gizmo 类
@@ -138,6 +164,7 @@ new Gizmo(options?: {
 | `mountToPrimitive(primitive, viewer)` | 挂载到 Primitive |
 | `mountToEntity(entity, viewer)` | 挂载到 Entity |
 | `setMode(mode)` | 设置变换模式 |
+| `setEnabled(enabled)` | 设置启用/禁用状态 |
 
 #### ⚠️ 重要说明
 

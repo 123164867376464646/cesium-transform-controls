@@ -92,6 +92,7 @@ export class Gizmo {
   autoSyncMountedPrimitive: boolean
   _isInteracting: boolean
   _lastSyncedPosition: Cartesian3 | null
+  _enabled: boolean
 
   constructor(options?: GizmoOptions) {
     options = options || {}
@@ -145,6 +146,7 @@ export class Gizmo {
     this.autoSyncMountedPrimitive = true
     this._isInteracting = false
     this._lastSyncedPosition = null
+    this._enabled = true
 
     this.createGizmoPrimitive()
   }
@@ -1075,6 +1077,22 @@ export class Gizmo {
     }
 
     return mounted._entity
+  }
+
+  /**
+   * 设置 Gizmo 的启用/禁用状态
+   * @param enabled - true 启用交互, false 禁用交互（仍然可见但不响应鼠标事件）
+   */
+  setEnabled(enabled: boolean) {
+    this._enabled = enabled
+  }
+
+  /**
+   * 获取 Gizmo 的启用状态
+   * @returns 当前是否启用
+   */
+  get enabled(): boolean {
+    return this._enabled
   }
 }
 

@@ -51,6 +51,7 @@ viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY)
 const settings = {
   transformMode: 'translate',
   translateMode: 'local',
+  enabled: true,
 }
 
 const gui = new dat.GUI({ name: '变换控制器' })
@@ -86,6 +87,11 @@ translateModeController = gui.add(settings, 'translateMode', ['local', 'surface'
       gizmo.transMode = TranslateMode.surface
       break
   }
+})
+
+// 启用/禁用控制
+gui.add(settings, 'enabled').name('enabled').onChange((value: boolean) => {
+  gizmo.setEnabled(value)
 })
 
 // 初始化为平移模式

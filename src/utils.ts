@@ -84,6 +84,10 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
   handler = new ScreenSpaceEventHandler(viewer.canvas)
 
   handler.setInputAction((movement: SSEHandler.PositionedEvent) => {
+    // 检查 Gizmo 是否启用
+    if (!gizmo.enabled)
+      return
+
     const picked = viewer.scene.pick(movement.position)
 
     if (defined(picked)) {
@@ -135,6 +139,10 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
   }, ScreenSpaceEventType.LEFT_CLICK)
 
   handler.setInputAction((movement: SSEHandler.PositionedEvent) => {
+    // 检查 Gizmo 是否启用
+    if (!gizmo.enabled)
+      return
+
     const picked = viewer.scene.pick(movement.position)
     if (defined(picked)) {
       if (
@@ -232,6 +240,10 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
   }, ScreenSpaceEventType.LEFT_UP)
 
   handler.setInputAction((movement: SSEHandler.MotionEvent) => {
+    // 检查 Gizmo 是否启用
+    if (!gizmo.enabled)
+      return
+
     if (!pickedGizmoId) {
       const hovered = viewer.scene.pick(movement.endPosition)
       const xMaterial
@@ -726,7 +738,7 @@ function getTrans(gizmoPartId: GizmoPart, viewer: Viewer, mouseDirOnWindowCoordi
   // 然后与mouseDir做点积, 得到沿轴移动的像素数
   const deltaPixelsAlongAxis
     = Cartesian2.dot(axisDirOnWindowCoordinates, mouseDirOnWindowCoordinates)
-      / Cartesian2.magnitude(axisDirOnWindowCoordinates)
+    / Cartesian2.magnitude(axisDirOnWindowCoordinates)
 
   const metersPerPixel = viewer.camera.getPixelSize(
     new BoundingSphere(
@@ -848,10 +860,10 @@ function getPlaneTrans(gizmoPartId: GizmoPart, viewer: Viewer, mouseDirOnWindowC
   // Project mouse movement onto both axes
   const deltaPixelsAxis1
     = Cartesian2.dot(axis1DirOnWindow, mouseDirOnWindowCoordinates)
-      / Cartesian2.magnitude(axis1DirOnWindow)
+    / Cartesian2.magnitude(axis1DirOnWindow)
   const deltaPixelsAxis2
     = Cartesian2.dot(axis2DirOnWindow, mouseDirOnWindowCoordinates)
-      / Cartesian2.magnitude(axis2DirOnWindow)
+    / Cartesian2.magnitude(axis2DirOnWindow)
 
   const metersPerPixel = viewer.camera.getPixelSize(
     new BoundingSphere(
@@ -1046,7 +1058,7 @@ function getScale(
   // 然后与mouseDir做点积, 得到沿轴移动的像素数
   const deltaPixelsAlongAxis
     = Cartesian2.dot(axisDirOnWindowCoordinates, mouseDirOnWindowCoordinates)
-      / Cartesian2.magnitude(axisDirOnWindowCoordinates)
+    / Cartesian2.magnitude(axisDirOnWindowCoordinates)
   const factor = deltaPixelsAlongAxis / 10 + 1
 
   let scale
