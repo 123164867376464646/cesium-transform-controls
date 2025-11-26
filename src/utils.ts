@@ -13,8 +13,10 @@ interface VirtualPrimitive {
 
 /**
  * 构建实体定位器（通用实现）
+ * @param entity - Cesium Entity 对象
+ * @returns 实体定位器对象，用于在实体重新创建后重新定位
  */
-function buildEntityLocator(entity: any): MountedEntityLocator | undefined {
+export function buildEntityLocator(entity: any): MountedEntityLocator | undefined {
   if (!entity)
     return undefined
 
@@ -153,7 +155,6 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
         || picked.id === GizmoPart.xzPlane
         || picked.id === GizmoPart.yzPlane
       ) {
-        console.log(picked.id)
         // picked gizmo
         pickedGizmoId = picked.id
 

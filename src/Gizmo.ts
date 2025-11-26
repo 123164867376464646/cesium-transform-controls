@@ -21,7 +21,7 @@ import {
   Transforms,
 } from 'cesium'
 import { GizmoComponentPrimitive } from './GizmoComponentPrimitive'
-import { addPointerEventHandler, computeCircle, removePointerEventHandler } from './utils'
+import { addPointerEventHandler, buildEntityLocator, computeCircle, removePointerEventHandler } from './utils'
 
 /**
  * 通用的实体定位器接口
@@ -722,7 +722,7 @@ export class Gizmo {
         return
 
       if (!mounted._entityLocator) {
-        mounted._entityLocator = this.buildEntityLocator(entity)
+        mounted._entityLocator = buildEntityLocator(entity)
       }
 
       const time = this._viewer.clock?.currentTime
@@ -802,7 +802,7 @@ export class Gizmo {
       modelMatrix: transform.clone(),
       _isEntity: true,
       _entity: entity,
-      _entityLocator: this.buildEntityLocator(entity),
+      _entityLocator: buildEntityLocator(entity),
     }
 
     this._mountedPrimitive = virtualPrimitive as unknown as Primitive
@@ -995,42 +995,7 @@ export class Gizmo {
     }
   }
 
-  /**
-   * 构建实体定位器（通用实现）
-   * 可以通过回调函数自定义定位逻辑
-   */
-  private buildEntityLocator(entity: Entity | undefined): MountedEntityLocator | undefined {
-    if (!entity)
-      return undefined
 
-    const locator: MountedEntityLocator = {}
-    let hasData = false
-
-    if (entity.id) {
-      locator.entityId = entity.id
-      hasData = true
-    }
-
-    // 收集所有自定义属性
-    const customProperties: Record<string, any> = {}
-    for (const key in entity) {
-      // 跳过 Cesium 内部属性和方法
-      if (!key.startsWith('_') && typeof (entity as any)[key] !== 'function' && key !== 'id') {
-        const value = (entity as any)[key]
-        // 只保存基础类型的自定义属性（可用作标识符）
-        if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-          customProperties[key] = value
-        }
-      }
-    }
-
-    if (Object.keys(customProperties).length > 0) {
-      locator.customProperties = customProperties
-      hasData = true
-    }
-
-    return hasData ? locator : undefined
-  }
 
   /**
    * 解析挂载的实体（通用实现）
@@ -1105,7 +1070,6 @@ function calTransModelMatrix(axis: Cartesian3, translate: number): Matrix4 {
     Matrix4.setRotation(modelMatrix, rotation, modelMatrix)
   }
   else if (Cartesian3.equals(axis, Cartesian3.negate(Cartesian3.UNIT_X, new Cartesian3()))) {
-    console.log(translate)
     const rotation = Matrix3.fromRotationY(CesiumMath.toRadians(-90))
     const translation = Cartesian3.fromElements(-translate, +0.0001, 0)//TODO: 解决Z轴线渲染时Z-fighting问题
     Matrix4.setTranslation(modelMatrix, translation, modelMatrix)

@@ -68,7 +68,5 @@ export function getScaleForMinimumSize(model: Gizmo, frameState: any): number {
     scale = (model.length * metersPerPixel) / (2.0 * radius)
   }
 
-  //   console.log(scale, "m/Pixel", metersPerPixel, maxPixelSize, diameterInPixels);
-
   return scale
 }
