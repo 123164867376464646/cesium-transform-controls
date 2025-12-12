@@ -18,7 +18,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "release": "bash scripts/publish.sh",
+    "release:patch": "bash scripts/publish.sh patch",
+    "release:minor": "bash scripts/publish.sh minor",
+    "release:major": "bash scripts/publish.sh major"
   },
   "keywords": [
     "cesium",
