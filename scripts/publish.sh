@@ -34,8 +34,8 @@ fi
 
 echo -e "${GREEN}📦 开始发布流程...${NC}"
 
-# 获取当前版本
-CURRENT_VERSION=$(node -p "require('./package.json').version")
+# 获取当前版本 (使用 npm pkg get，去掉引号)
+CURRENT_VERSION=$(npm pkg get version | tr -d '"')
 echo -e "当前版本: ${YELLOW}$CURRENT_VERSION${NC}"
 
 # 构建项目
@@ -47,7 +47,7 @@ echo -e "\n${GREEN}🔄 更新版本 ($VERSION_TYPE)...${NC}"
 npm version $VERSION_TYPE -m "chore: 发布 v%s"
 
 # 获取新版本
-NEW_VERSION=$(node -p "require('./package.json').version")
+NEW_VERSION=$(npm pkg get version | tr -d '"')
 echo -e "新版本: ${YELLOW}$NEW_VERSION${NC}"
 
 # 推送到 git
@@ -80,7 +80,7 @@ fi
 
 # 输出结果
 if [ "$PUBLISH_SUCCESS" = true ]; then
-    PACKAGE_NAME=$(node -p "require('./package.json').name")
+    PACKAGE_NAME=$(npm pkg get name | tr -d '"')
     echo -e "\n${GREEN}✅ 发布成功! 版本: v$NEW_VERSION${NC}"
     echo -e "   npm: https://www.npmjs.com/package/$PACKAGE_NAME"
 else
