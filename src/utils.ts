@@ -61,6 +61,19 @@ export function computeCircle(r: number) {
   return points
 }
 
+/**
+ * 兼容性处理：世界坐标转屏幕坐标
+ * Cesium 1.114+ 使用 SceneTransforms.worldToWindowCoordinates
+ * 旧版本使用 SceneTransforms.wgs84ToWindowCoordinates
+ */
+function worldToWindowCoordinates(scene: any, position: Cartesian3): Cartesian2 | undefined {
+  if (SceneTransforms.worldToWindowCoordinates) {
+    return SceneTransforms.worldToWindowCoordinates(scene, position)
+  }
+  // Fallback for older versions
+  return (SceneTransforms as any).wgs84ToWindowCoordinates(scene, position)
+}
+
 let startPos = new Cartesian2() // For Trans and Rotate
 let gizmoStartPos = new Cartesian3()
 let gizmoStartModelMatrix = new Matrix4()
@@ -707,7 +720,7 @@ function getTrans(gizmoPartId: GizmoPart, viewer: Viewer, mouseDirOnWindowCoordi
     new Cartesian3(),
   )
 
-  const originPosOnWindowCoordinates = SceneTransforms.worldToWindowCoordinates(
+  const originPosOnWindowCoordinates = worldToWindowCoordinates(
     viewer.scene,
     gizmoStartPos,
   )
@@ -721,7 +734,7 @@ function getTrans(gizmoPartId: GizmoPart, viewer: Viewer, mouseDirOnWindowCoordi
     axisDirOnWorldCoordinates,
     new Cartesian3(),
   )
-  const endPosOnWindowCoordinates = SceneTransforms.worldToWindowCoordinates(
+  const endPosOnWindowCoordinates = worldToWindowCoordinates(
     viewer.scene,
     endPos,
   )
@@ -809,7 +822,7 @@ function getPlaneTrans(gizmoPartId: GizmoPart, viewer: Viewer, mouseDirOnWindowC
     new Cartesian3(),
   )
 
-  const originPosOnWindowCoordinates = SceneTransforms.worldToWindowCoordinates(
+  const originPosOnWindowCoordinates = worldToWindowCoordinates(
     viewer.scene,
     gizmoStartPos,
   )
@@ -824,7 +837,7 @@ function getPlaneTrans(gizmoPartId: GizmoPart, viewer: Viewer, mouseDirOnWindowC
     axis1DirWorld,
     new Cartesian3(),
   )
-  const axis1EndPosOnWindow = SceneTransforms.worldToWindowCoordinates(
+  const axis1EndPosOnWindow = worldToWindowCoordinates(
     viewer.scene,
     axis1EndPos,
   )
@@ -844,7 +857,7 @@ function getPlaneTrans(gizmoPartId: GizmoPart, viewer: Viewer, mouseDirOnWindowC
     axis2DirWorld,
     new Cartesian3(),
   )
-  const axis2EndPosOnWindow = SceneTransforms.worldToWindowCoordinates(
+  const axis2EndPosOnWindow = worldToWindowCoordinates(
     viewer.scene,
     axis2EndPos,
   )
@@ -902,7 +915,7 @@ function getRotate(
   mouseEndPosOnWindowCoordinates: Cartesian2,
 ) {
   // cal delta angle between start and end around origin
-  const originPosOnWindowCoordinates = SceneTransforms.worldToWindowCoordinates(
+  const originPosOnWindowCoordinates = worldToWindowCoordinates(
     viewer.scene,
     gizmoStartPos,
   )
@@ -1026,7 +1039,7 @@ function getScale(
       return undefined
   }
 
-  const originPosOnWindowCoordinates = SceneTransforms.worldToWindowCoordinates(
+  const originPosOnWindowCoordinates = worldToWindowCoordinates(
     viewer.scene,
     gizmoStartPos,
   )
@@ -1041,7 +1054,7 @@ function getScale(
     new Cartesian3(),
   )
 
-  const endPosOnWindowCoordinates = SceneTransforms.worldToWindowCoordinates(
+  const endPosOnWindowCoordinates = worldToWindowCoordinates(
     viewer.scene,
     endPos,
   )
@@ -1116,7 +1129,7 @@ function getPlaneScale(
     axis2DirWorld,
   )
 
-  const originPosOnWindowCoordinates = SceneTransforms.worldToWindowCoordinates(
+  const originPosOnWindowCoordinates = worldToWindowCoordinates(
     viewer.scene,
     gizmoStartPos,
   )
@@ -1131,7 +1144,7 @@ function getPlaneScale(
     axis1DirWorld,
     new Cartesian3(),
   )
-  const axis1EndPosOnWindow = SceneTransforms.worldToWindowCoordinates(
+  const axis1EndPosOnWindow = worldToWindowCoordinates(
     viewer.scene,
     axis1EndPos,
   )
@@ -1151,7 +1164,7 @@ function getPlaneScale(
     axis2DirWorld,
     new Cartesian3(),
   )
-  const axis2EndPosOnWindow = SceneTransforms.worldToWindowCoordinates(
+  const axis2EndPosOnWindow = worldToWindowCoordinates(
     viewer.scene,
     axis2EndPos,
   )
