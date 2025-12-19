@@ -1,4 +1,5 @@
 import type { Entity, Viewer } from 'cesium'
+import * as CesiumInternal from 'cesium'
 import {
   ArcType,
   BlendingState,
@@ -38,6 +39,9 @@ interface MountedVirtualPrimitive {
   _isEntity?: boolean
   _entity?: Entity
   _entityLocator?: MountedEntityLocator
+  _isNode?: boolean
+  _node?: any
+  _model?: any
 }
 
 export enum GizmoPart {
@@ -749,11 +753,36 @@ export class Gizmo {
       }
     }
     else if (mounted.modelMatrix) {
+      // 节点类型不需要自动同步，因为有特殊的scale处理逻辑
+      if ((mounted as any)._isNode) {
+        return
+      }
+
       // 如果正在交互，则不更新 Primitive 的位置
       if (this._isInteracting)
         return
 
-      Matrix4.clone(mounted.modelMatrix, this.modelMatrix)
+      // 同步时移除缩放分量，确保 Gizmo 不会因为 Model 的缩放而变形
+      const position = Matrix4.getTranslation(mounted.modelMatrix, new Cartesian3())
+      const rotationWithScale = Matrix4.getMatrix3(mounted.modelMatrix, new Matrix3())
+
+      // 归一化每个列向量以移除 scale
+      const col0 = new Cartesian3(rotationWithScale[0], rotationWithScale[1], rotationWithScale[2])
+      const col1 = new Cartesian3(rotationWithScale[3], rotationWithScale[4], rotationWithScale[5])
+      const col2 = new Cartesian3(rotationWithScale[6], rotationWithScale[7], rotationWithScale[8])
+
+      Cartesian3.normalize(col0, col0)
+      Cartesian3.normalize(col1, col1)
+      Cartesian3.normalize(col2, col2)
+
+      const pureRotation = new Matrix3(
+        col0.x, col1.x, col2.x,
+        col0.y, col1.y, col2.y,
+        col0.z, col1.z, col2.z
+      )
+
+      const gizmoMatrix = Matrix4.fromRotationTranslation(pureRotation, position, new Matrix4())
+      Matrix4.clone(gizmoMatrix, this.modelMatrix)
     }
   }
 
@@ -809,10 +838,6 @@ export class Gizmo {
     Matrix4.clone(transform, this.modelMatrix)
     this.autoSyncMountedPrimitive = true
     this._lastSyncedPosition = position.clone()
-
-    if (this._transPrimitives) {
-      this._transPrimitives._show = true
-    }
   }
 
   /**
@@ -821,22 +846,175 @@ export class Gizmo {
    * @param viewer - Viewer 实例
    */
   mountToPrimitive(primitive: any, viewer?: Viewer | null) {
-    if (!primitive || !primitive.modelMatrix)
+    if (!primitive || !primitive.modelMatrix) {
+      console.error('Primitive must have modelMatrix')
       return
+    }
 
     const currentViewer = viewer || this._viewer
-    if (!currentViewer)
+    if (!currentViewer) {
+      console.error('Viewer is required')
       return
+    }
 
     // 直接使用 primitive 的 modelMatrix
     this._mountedPrimitive = primitive
     Matrix4.clone(primitive.modelMatrix, this.modelMatrix)
     this.autoSyncMountedPrimitive = true
-
-    if (this._transPrimitives) {
-      this._transPrimitives._show = true
-    }
   }
+
+  /**
+   * 挂载到 Model 的子节点（ModelNode）
+   * 
+   * 使用 Cesium 内部的 sceneGraph 流程计算节点世界坐标
+   * 完整公式：worldMatrix = modelMatrix × components.transform × axisCorrectionMatrix × transformToRoot × transform
+   * 
+   * 参考：
+   * - ModelSceneGraph.js: computedModelMatrix 的计算
+   * - ModelRuntimeNode.js: computedTransform 的定义
+   * - ModelUtility.js: getAxisCorrectionMatrix
+   * 
+   * @param node - ModelNode 对象
+   * @param model - 节点所属的 Model 对象
+   * @param viewer - Viewer 实例
+   */
+  mountToNode(node: any, model: any, viewer?: Viewer | null) {
+    if (!node) {
+      console.error('Node is required')
+      return
+    }
+
+    if (!model || !model.modelMatrix) {
+      console.error('Model must have modelMatrix property')
+      return
+    }
+
+    const currentViewer = viewer || this._viewer
+    if (!currentViewer) {
+      console.error('Viewer is required')
+      return
+    }
+
+    // 获取节点的 runtimeNode
+    const runtimeNode = (node as any)._runtimeNode
+    if (!runtimeNode) {
+      console.error('Cannot access _runtimeNode')
+      return
+    }
+
+    // 获取模型的 sceneGraph
+    const sceneGraph = (model as any)._sceneGraph
+    if (!sceneGraph) {
+      console.error('Cannot access _sceneGraph')
+      return
+    }
+
+    // 1. 获取各种变换矩阵
+    // 1.1 节点的局部变换（相对于父节点）
+    const nodeTransform = runtimeNode.transform || Matrix4.IDENTITY
+    // console.log('① transform (节点局部):', nodeTransform)
+
+    // 1.2 到根节点的累积变换
+    const transformToRoot = runtimeNode.transformToRoot || Matrix4.IDENTITY
+    // console.log('② transformToRoot (祖先累积):', transformToRoot)
+
+    // 1.3 轴校正矩阵 - 尝试从 sceneGraph 获取，否则手动计算
+    let axisCorrectionMatrix: Matrix4
+    if (sceneGraph.axisCorrectionMatrix) {
+      axisCorrectionMatrix = sceneGraph.axisCorrectionMatrix
+      // console.log('③ axisCorrectionMatrix (from sceneGraph):', axisCorrectionMatrix)
+    } else {
+      // 从 components 获取 upAxis 和 forwardAxis
+      const components = sceneGraph.components
+      const Axis = (CesiumInternal as any).Axis
+      const upAxis = components?.upAxis ?? Axis.Y  // 默认 Y-up (glTF 标准)
+      const forwardAxis = components?.forwardAxis ?? Axis.X  // 默认 X-forward
+      // console.log('   upAxis:', upAxis, '(0=X, 1=Y, 2=Z)')
+      // console.log('   forwardAxis:', forwardAxis)
+      axisCorrectionMatrix = (CesiumInternal as any).ModelUtility.getAxisCorrectionMatrix(upAxis, forwardAxis)
+      // console.log('③ axisCorrectionMatrix (computed):', axisCorrectionMatrix)
+    }
+
+    // 1.4 组件变换（模型级别）
+    const componentsTransform = sceneGraph.components?.transform || Matrix4.IDENTITY
+    // console.log('④ components.transform:', componentsTransform)
+
+    // 1.5 模型矩阵（世界空间位置和方向）
+    const modelMatrix = model.modelMatrix
+    // console.log('⑤ modelMatrix:', modelMatrix)
+
+    // 1.6 模型缩放
+    const modelScale = (model as any).scale ?? 1
+    // console.log('⑥ model.scale:', modelScale)
+
+    // 2. 按照公式计算世界矩阵
+    // worldMatrix = modelMatrix × components.transform × axisCorrectionMatrix × transformToRoot × transform
+
+    // Step 1: transformToRoot × transform
+    const step1 = Matrix4.multiply(transformToRoot, nodeTransform, new Matrix4())
+
+    // Step 2: axisCorrectionMatrix × step1
+    const step2 = Matrix4.multiply(axisCorrectionMatrix, step1, new Matrix4())
+
+    // Step 3: components.transform × step2
+    const step3 = Matrix4.multiply(componentsTransform, step2, new Matrix4())
+
+    // Step 4: 应用 scale（如果有）
+    let step4: Matrix4
+    if (modelScale !== 1) {
+      const scaleMatrix = Matrix4.fromUniformScale(modelScale)
+      step4 = Matrix4.multiply(scaleMatrix, step3, new Matrix4())
+    } else {
+      step4 = step3
+    }
+
+    // Step 5: modelMatrix × step4 = 最终世界矩阵
+    const nodeWorldMatrix = Matrix4.multiply(modelMatrix, step4, new Matrix4())
+
+    // 获取节点世界位置
+    const nodeWorldPosition = Matrix4.getTranslation(nodeWorldMatrix, new Cartesian3())
+    // console.log('Node world position:', nodeWorldPosition)
+
+    // 提取模型的旋转（用于 gizmo 的朝向）
+    const modelRotation = Matrix4.getMatrix3(model.modelMatrix, new Matrix3())
+
+    // 归一化旋转矩阵（移除可能的缩放影响）
+    const col0 = new Cartesian3(modelRotation[0], modelRotation[1], modelRotation[2])
+    const col1 = new Cartesian3(modelRotation[3], modelRotation[4], modelRotation[5])
+    const col2 = new Cartesian3(modelRotation[6], modelRotation[7], modelRotation[8])
+    Cartesian3.normalize(col0, col0)
+    Cartesian3.normalize(col1, col1)
+    Cartesian3.normalize(col2, col2)
+    const normalizedRotation = new Matrix3(
+      col0.x, col1.x, col2.x,
+      col0.y, col1.y, col2.y,
+      col0.z, col1.z, col2.z
+    )
+
+    // 构建 gizmo 的 modelMatrix（位置 + 旋转，不含 scale）
+    const gizmoMatrix = Matrix4.fromRotationTranslation(
+      normalizedRotation,
+      nodeWorldPosition,
+      new Matrix4()
+    )
+
+    // 创建包装对象
+    const nodeWrapper = {
+      modelMatrix: gizmoMatrix,
+      _isNode: true,
+      _node: node,
+      _model: model,
+      _axisCorrectionMatrix: axisCorrectionMatrix, // 保存修正矩阵供后续使用
+      _sceneGraph: sceneGraph, // 保存 sceneGraph 供后续使用
+      _scale: 1, // 节点的局部缩放值，初始为 1
+    }
+
+    // 挂载
+    this._mountedPrimitive = nodeWrapper as any
+    Matrix4.clone(gizmoMatrix, this.modelMatrix)
+    this.autoSyncMountedPrimitive = false
+  }
+
 
   attach(viewer: Viewer) {
     this._viewer = viewer
@@ -915,6 +1093,12 @@ export class Gizmo {
   }
 
   setMode(mode: GizmoMode) {
+    if (!this._transPrimitives || !this._rotatePrimitives || !this._scalePrimitives)
+      return
+    this._transPrimitives._show = false
+    this._rotatePrimitives._show = false
+    this._scalePrimitives._show = false
+    
     if (mode === GizmoMode.translate) {
       this.mode = GizmoMode.translate
       if (this._transPrimitives) {

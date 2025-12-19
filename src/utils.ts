@@ -108,12 +108,20 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
     if (defined(picked)) {
       if (!gizmo.isGizmoPrimitive(picked.primitive)) {
         // 用于解决其他对象被Gizmo遮挡后无法选中的问题
+        // 先隐藏所有模式的 primitive
         if (gizmo._transPrimitives) {
           gizmo._transPrimitives._show = false
         }
+        if (gizmo._rotatePrimitives) {
+          gizmo._rotatePrimitives._show = false
+        }
+        if (gizmo._scalePrimitives) {
+          gizmo._scalePrimitives._show = false
+        }
         requestAnimationFrame(() => {
-          if (gizmo._transPrimitives) {
-            gizmo._transPrimitives._show = true
+          // 通过 setMode 只显示当前模式的 primitive
+          if (gizmo.mode) {
+            gizmo.setMode(gizmo.mode)
           }
         })
 
@@ -136,19 +144,33 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
             // 设置gizmo的目标
             gizmo._mountedPrimitive = virtualPrimitive as any
             gizmo.modelMatrix = transform.clone()
+            // 重新设置当前模式，确保只显示当前模式的 primitive
+            if (gizmo.mode) {
+              gizmo.setMode(gizmo.mode)
+            }
           }
         }
         // 检查是否是Primitive
         else if (picked.primitive && picked.primitive.modelMatrix instanceof Matrix4) {
           gizmo._mountedPrimitive = picked.primitive
           gizmo.modelMatrix = picked.primitive.modelMatrix.clone()
+          // 重新设置当前模式，确保只显示当前模式的 primitive
+          if (gizmo.mode) {
+            gizmo.setMode(gizmo.mode)
+          }
         }
       }
     }
     else {
-      // 点击空白处 隐藏gizmo
+      // 点击空白处 隐藏gizmo（所有模式）
       if (gizmo._transPrimitives) {
         gizmo._transPrimitives._show = false
+      }
+      if (gizmo._rotatePrimitives) {
+        gizmo._rotatePrimitives._show = false
+      }
+      if (gizmo._scalePrimitives) {
+        gizmo._scalePrimitives._show = false
       }
     }
   }, ScreenSpaceEventType.LEFT_CLICK)
@@ -195,7 +217,10 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
           gizmo.modelMatrix[13],
           gizmo.modelMatrix[14],
         )
+        
+        // 统一从 gizmo.modelMatrix 获取起始状态（与 Scale 模式一致）
         gizmoStartModelMatrix = gizmo.modelMatrix.clone()
+        
         if (gizmo._mountedPrimitive) {
           mountedPrimitiveStartModelMatrix
             = gizmo._mountedPrimitive.modelMatrix.clone()
@@ -218,6 +243,20 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
 
   handler.setInputAction((_movement: SSEHandler.PositionedEvent) => {
     if (pickedGizmoId) {
+      // 清除缩放操作的起始矩阵
+      const mountedPrimitive = gizmo._mountedPrimitive
+      if (mountedPrimitive && (mountedPrimitive as any)._nodeStartMatrix) {
+        delete (mountedPrimitive as any)._nodeStartMatrix
+      }
+      // 清除旋转操作的起始矩阵
+      if (mountedPrimitive && (mountedPrimitive as any)._nodeRotateStartMatrix) {
+        delete (mountedPrimitive as any)._nodeRotateStartMatrix
+        delete (mountedPrimitive as any)._gizmoRotateStartMatrix
+      }
+
+      // 注意：旋转模式下不同步 gizmo.modelMatrix 的旋转，保持轴方向固定
+      // 下次拖动时从 mountedPrimitive.modelMatrix 获取起始状态
+
       pickedGizmoId = null
       startPos = new Cartesian2()
       gizmoStartPos = new Cartesian3()
@@ -429,6 +468,110 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
 
             gizmo._lastSyncedPosition = translation.clone()
           }
+          else if (mountedPrimitive && (mountedPrimitive as any)._isNode) {
+            // 处理节点的变换更新
+            const node = (mountedPrimitive as any)._node
+            const model = (mountedPrimitive as any)._model
+            const runtimeNode = node._runtimeNode
+            const sceneGraph = (mountedPrimitive as any)._sceneGraph || model._sceneGraph
+            const axisCorrectionMatrix = (mountedPrimitive as any)._axisCorrectionMatrix || Matrix4.IDENTITY
+
+            // 获取当前gizmo的位置
+            const currentGizmoTranslation = Matrix4.getTranslation(newMatrix, new Cartesian3())
+
+            // 获取上一帧gizmo的位置（从wrapper的modelMatrix）
+            const lastGizmoTranslation = Matrix4.getTranslation(mountedPrimitive.modelMatrix, new Cartesian3())
+
+            // 计算这一帧的位移增量（世界坐标）
+            const deltaWorld = Cartesian3.subtract(currentGizmoTranslation, lastGizmoTranslation, new Cartesian3())
+
+            // 使用正确的公式计算节点世界矩阵（与 mountToNode 一致）
+            // worldMatrix = modelMatrix × components.transform × axisCorrectionMatrix × transformToRoot × transform
+            const modelScale = (model as any).scale ?? 1
+            const nodeTransform = runtimeNode?.transform || node.matrix || Matrix4.IDENTITY
+            const transformToRoot = runtimeNode?.transformToRoot || Matrix4.IDENTITY
+            const componentsTransform = sceneGraph?.components?.transform || Matrix4.IDENTITY
+
+            // Step 1: transformToRoot × transform
+            const step1 = Matrix4.multiply(transformToRoot, nodeTransform, new Matrix4())
+            // Step 2: axisCorrectionMatrix × step1
+            const step2 = Matrix4.multiply(axisCorrectionMatrix, step1, new Matrix4())
+            // Step 3: components.transform × step2
+            const step3 = Matrix4.multiply(componentsTransform, step2, new Matrix4())
+            // Step 4: 应用 scale
+            let step4: Matrix4
+            if (modelScale !== 1) {
+              const scaleMatrix = Matrix4.fromUniformScale(modelScale)
+              step4 = Matrix4.multiply(scaleMatrix, step3, new Matrix4())
+            } else {
+              step4 = step3
+            }
+            // Step 5: modelMatrix × step4 = nodeWorldMatrix
+            const nodeWorldMatrix = Matrix4.multiply(model.modelMatrix, step4, new Matrix4())
+
+            // 将世界坐标的位移转换到节点自身坐标系
+            const inverseNodeWorldMatrix = Matrix4.inverse(nodeWorldMatrix, new Matrix4())
+            const deltaInNodeSpace = Matrix4.multiplyByPointAsVector(
+              inverseNodeWorldMatrix,
+              deltaWorld,
+              new Cartesian3()
+            )
+
+            // 创建节点坐标系中的平移矩阵，并应用到当前节点矩阵
+            const translationMatrix = Matrix4.fromTranslation(deltaInNodeSpace, new Matrix4())
+            const newNodeMatrix = Matrix4.multiply(
+              nodeTransform,
+              translationMatrix,
+              new Matrix4()
+            )
+
+            // 更新节点矩阵
+            node.matrix = newNodeMatrix
+            // 如果有 runtimeNode，也需要更新
+            if (runtimeNode) {
+              runtimeNode.transform = newNodeMatrix
+            }
+
+            // 重新计算更新后的节点世界矩阵
+            const newTransformToRoot = runtimeNode?.transformToRoot || Matrix4.IDENTITY
+            const updatedStep1 = Matrix4.multiply(newTransformToRoot, newNodeMatrix, new Matrix4())
+            const updatedStep2 = Matrix4.multiply(axisCorrectionMatrix, updatedStep1, new Matrix4())
+            const updatedStep3 = Matrix4.multiply(componentsTransform, updatedStep2, new Matrix4())
+            let updatedStep4: Matrix4
+            if (modelScale !== 1) {
+              const scaleMatrix = Matrix4.fromUniformScale(modelScale)
+              updatedStep4 = Matrix4.multiply(scaleMatrix, updatedStep3, new Matrix4())
+            } else {
+              updatedStep4 = updatedStep3
+            }
+            const updatedNodeWorldMatrix = Matrix4.multiply(model.modelMatrix, updatedStep4, new Matrix4())
+
+            // 提取位置和旋转（不含scale）更新gizmo显示
+            const updatedPosition = Matrix4.getTranslation(updatedNodeWorldMatrix, new Cartesian3())
+
+            // 提取旋转矩阵并归一化以移除scale
+            const rotationWithScale = Matrix4.getMatrix3(model.modelMatrix, new Matrix3())
+
+            // 归一化每个列向量以移除scale
+            const col0 = new Cartesian3(rotationWithScale[0], rotationWithScale[1], rotationWithScale[2])
+            const col1 = new Cartesian3(rotationWithScale[3], rotationWithScale[4], rotationWithScale[5])
+            const col2 = new Cartesian3(rotationWithScale[6], rotationWithScale[7], rotationWithScale[8])
+
+            Cartesian3.normalize(col0, col0)
+            Cartesian3.normalize(col1, col1)
+            Cartesian3.normalize(col2, col2)
+
+            const updatedRotation = new Matrix3(
+              col0.x, col1.x, col2.x,
+              col0.y, col1.y, col2.y,
+              col0.z, col1.z, col2.z
+            )
+
+            const updatedGizmoMatrix = Matrix4.fromRotationTranslation(updatedRotation, updatedPosition, new Matrix4())
+
+            // 更新wrapper的modelMatrix（不含scale，gizmo显示用）
+            Matrix4.clone(updatedGizmoMatrix, mountedPrimitive.modelMatrix)
+          }
           else if (mountedPrimitive) {
             const newPrimitiveMatrix = Matrix4.clone(mountedPrimitive.modelMatrix, new Matrix4())
             Matrix4.setTranslation(newPrimitiveMatrix, translation, newPrimitiveMatrix)
@@ -543,6 +686,65 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
             // 更新 Gizmo 的最后同步位置
             gizmo._lastSyncedPosition = newPosition.clone()
           }
+          else if (mountedPrimitive && (mountedPrimitive as any)._isNode) {
+            // 处理节点的变换更新（Surface 模式）
+            const node = (mountedPrimitive as any)._node
+            const model = (mountedPrimitive as any)._model
+            const runtimeNode = node._runtimeNode
+            const sceneGraph = (mountedPrimitive as any)._sceneGraph || model._sceneGraph
+            const axisCorrectionMatrix = (mountedPrimitive as any)._axisCorrectionMatrix || Matrix4.IDENTITY
+
+            // 获取新 gizmo 位置和旧 gizmo 位置
+            const newGizmoPosition = Matrix4.getTranslation(resultMatrix, new Cartesian3())
+            const lastGizmoPosition = Matrix4.getTranslation(mountedPrimitive.modelMatrix, new Cartesian3())
+
+            // 计算这一帧的位移增量（世界坐标）
+            const deltaWorld = Cartesian3.subtract(newGizmoPosition, lastGizmoPosition, new Cartesian3())
+
+            // 使用正确的公式计算节点世界矩阵（与 mountToNode 一致）
+            const modelScale = (model as any).scale ?? 1
+            const nodeTransform = runtimeNode?.transform || node.matrix || Matrix4.IDENTITY
+            const transformToRoot = runtimeNode?.transformToRoot || Matrix4.IDENTITY
+            const componentsTransform = sceneGraph?.components?.transform || Matrix4.IDENTITY
+
+            // 计算当前节点的世界矩阵
+            const step1 = Matrix4.multiply(transformToRoot, nodeTransform, new Matrix4())
+            const step2 = Matrix4.multiply(axisCorrectionMatrix, step1, new Matrix4())
+            const step3 = Matrix4.multiply(componentsTransform, step2, new Matrix4())
+            let step4: Matrix4
+            if (modelScale !== 1) {
+              const scaleMatrix = Matrix4.fromUniformScale(modelScale)
+              step4 = Matrix4.multiply(scaleMatrix, step3, new Matrix4())
+            } else {
+              step4 = step3
+            }
+            const nodeWorldMatrix = Matrix4.multiply(model.modelMatrix, step4, new Matrix4())
+
+            // 将世界坐标的位移转换到节点自身坐标系
+            const inverseNodeWorldMatrix = Matrix4.inverse(nodeWorldMatrix, new Matrix4())
+            const deltaInNodeSpace = Matrix4.multiplyByPointAsVector(
+              inverseNodeWorldMatrix,
+              deltaWorld,
+              new Cartesian3()
+            )
+
+            // 创建节点坐标系中的平移矩阵，并应用到当前节点矩阵
+            const translationMatrix = Matrix4.fromTranslation(deltaInNodeSpace, new Matrix4())
+            const newNodeMatrix = Matrix4.multiply(
+              nodeTransform,
+              translationMatrix,
+              new Matrix4()
+            )
+
+            // 更新节点矩阵
+            node.matrix = newNodeMatrix
+            if (runtimeNode) {
+              runtimeNode.transform = newNodeMatrix
+            }
+
+            // 同时更新 wrapper 的 modelMatrix 以保持同步
+            Matrix4.clone(resultMatrix, mountedPrimitive.modelMatrix)
+          }
           else if (mountedPrimitive) {
             Matrix4.clone(resultMatrix, mountedPrimitive.modelMatrix)
           }
@@ -565,8 +767,8 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
         gizmoStartModelMatrix,
       )
 
-      // apply rotation to gizmo
-      Matrix4.clone(gizmoStartModelMatrix, gizmo.modelMatrix)
+      // apply rotation to gizmo TODO 有待商榷
+      // Matrix4.clone(gizmoStartModelMatrix, gizmo.modelMatrix)
 
       // ----
       const mountedPrimitive = gizmo._mountedPrimitive
@@ -602,8 +804,210 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
           const newPosition = Matrix4.getTranslation(resultMatrix, new Cartesian3())
           gizmo._lastSyncedPosition = newPosition.clone()
         }
+        else if ((mountedPrimitive as any)._isNode) {
+          // 处理节点的旋转更新 - 使用与 scale 模式类似的轴映射方法
+          const node = (mountedPrimitive as any)._node
+          const model = (mountedPrimitive as any)._model
+          const runtimeNode = node._runtimeNode
+          const sceneGraph = (mountedPrimitive as any)._sceneGraph || model._sceneGraph
+          const axisCorrectionMatrix = (mountedPrimitive as any)._axisCorrectionMatrix || Matrix4.IDENTITY
+
+          // 获取节点当前的变换矩阵
+          const nodeTransform = runtimeNode?.transform || node.matrix || Matrix4.IDENTITY
+
+          // 保存节点的起始矩阵和起始角度（仅在开始旋转时保存一次）
+          if (!(mountedPrimitive as any)._nodeRotateStartMatrix) {
+            ;(mountedPrimitive as any)._nodeRotateStartMatrix = nodeTransform.clone()
+            ;(mountedPrimitive as any)._rotateAccumulatedAngle = 0
+          }
+          const nodeStartMatrix = (mountedPrimitive as any)._nodeRotateStartMatrix
+
+          // 使用与 scale 模式相同的方式计算完整的节点世界矩阵
+          const modelScale = (model as any).scale ?? 1
+          const transformToRoot = runtimeNode?.transformToRoot || Matrix4.IDENTITY
+          const componentsTransform = sceneGraph?.components?.transform || Matrix4.IDENTITY
+
+          // 计算 localToModelMatrix
+          const step1 = Matrix4.multiply(transformToRoot, nodeStartMatrix, new Matrix4())
+          const step2 = Matrix4.multiply(axisCorrectionMatrix, step1, new Matrix4())
+          const step3 = Matrix4.multiply(componentsTransform, step2, new Matrix4())
+          let localToModelMatrix: Matrix4
+          if (modelScale !== 1) {
+            const scaleMatrixM = Matrix4.fromUniformScale(modelScale)
+            localToModelMatrix = Matrix4.multiply(scaleMatrixM, step3, new Matrix4())
+          } else {
+            localToModelMatrix = step3
+          }
+
+          // 获取从模型空间到节点局部空间的逆矩阵
+          const modelToLocalMatrix = Matrix4.inverse(localToModelMatrix, new Matrix4())
+
+          // 将 gizmo 的单位向量转换到节点局部坐标系
+          const localXDir = Matrix4.multiplyByPointAsVector(modelToLocalMatrix, Cartesian3.UNIT_X, new Cartesian3())
+          const localYDir = Matrix4.multiplyByPointAsVector(modelToLocalMatrix, Cartesian3.UNIT_Y, new Cartesian3())
+          const localZDir = Matrix4.multiplyByPointAsVector(modelToLocalMatrix, Cartesian3.UNIT_Z, new Cartesian3())
+
+          // 找出每个 gizmo 轴对应的节点局部轴（X=0, Y=1, Z=2）
+          const findMaxAxis = (dir: Cartesian3) => {
+            const absX = Math.abs(dir.x)
+            const absY = Math.abs(dir.y)
+            const absZ = Math.abs(dir.z)
+            if (absX >= absY && absX >= absZ) return { axis: 0, sign: Math.sign(dir.x) || 1 }
+            if (absY >= absZ) return { axis: 1, sign: Math.sign(dir.y) || 1 }
+            return { axis: 2, sign: Math.sign(dir.z) || 1 }
+          }
+
+          const xMapping = findMaxAxis(localXDir)
+          const yMapping = findMaxAxis(localYDir)
+          const zMapping = findMaxAxis(localZDir)
+
+          // 计算坐标变换的行列式来检测手性变化
+          // 如果行列式为负，或者轴发生了奇置换（如X↔Y），需要调整旋转方向
+          // 构造由 localXDir, localYDir, localZDir 组成的矩阵（列向量）
+          const det = localXDir.x * (localYDir.y * localZDir.z - localYDir.z * localZDir.y)
+                    - localXDir.y * (localYDir.x * localZDir.z - localYDir.z * localZDir.x)
+                    + localXDir.z * (localYDir.x * localZDir.y - localYDir.y * localZDir.x)
+
+          // 检测轴置换的奇偶性
+          // 轴映射: [xMapping.axis, yMapping.axis, zMapping.axis] 应该是 [0,1,2] 的某个置换
+          // 奇置换需要反转旋转方向
+          const permutation = [xMapping.axis, yMapping.axis, zMapping.axis]
+          let inversionCount = 0
+          for (let i = 0; i < 3; i++) {
+            for (let j = i + 1; j < 3; j++) {
+              if (permutation[i] > permutation[j]) inversionCount++
+            }
+          }
+          const isOddPermutation = inversionCount % 2 === 1
+
+          // 调试信息 - 打印轴映射
+          const axisNames = ['X', 'Y', 'Z']
+          console.log('=== 旋转调试信息 ===')
+          console.log('拾取的Gizmo轴:', pickedGizmoId === GizmoPart.xAxis ? 'X' : pickedGizmoId === GizmoPart.yAxis ? 'Y' : 'Z')
+          console.log('localXDir (gizmo X在节点空间):', `(${localXDir.x.toFixed(4)}, ${localXDir.y.toFixed(4)}, ${localXDir.z.toFixed(4)})`)
+          console.log('localYDir (gizmo Y在节点空间):', `(${localYDir.x.toFixed(4)}, ${localYDir.y.toFixed(4)}, ${localYDir.z.toFixed(4)})`)
+          console.log('localZDir (gizmo Z在节点空间):', `(${localZDir.x.toFixed(4)}, ${localZDir.y.toFixed(4)}, ${localZDir.z.toFixed(4)})`)
+          console.log('轴映射: gizmoX->' + axisNames[xMapping.axis] + '(sign=' + xMapping.sign + ')')
+          console.log('轴映射: gizmoY->' + axisNames[yMapping.axis] + '(sign=' + yMapping.sign + ')')
+          console.log('轴映射: gizmoZ->' + axisNames[zMapping.axis] + '(sign=' + zMapping.sign + ')')
+          console.log('行列式:', det.toFixed(6), ', 置换:', permutation, ', 逆序数:', inversionCount, ', 是奇置换:', isOddPermutation)
+
+          // 根据 pickedGizmoId 确定在节点局部空间中旋转哪个轴
+          let localRotationAxis: number
+          let axisSign: number
+          let gizmoAxisIndex: number // gizmo轴的索引：X=0, Y=1, Z=2
+          if (pickedGizmoId === GizmoPart.xAxis) {
+            localRotationAxis = xMapping.axis
+            axisSign = xMapping.sign
+            gizmoAxisIndex = 0
+          } else if (pickedGizmoId === GizmoPart.yAxis) {
+            localRotationAxis = yMapping.axis
+            axisSign = yMapping.sign
+            gizmoAxisIndex = 1
+          } else if (pickedGizmoId === GizmoPart.zAxis) {
+            localRotationAxis = zMapping.axis
+            axisSign = zMapping.sign
+            gizmoAxisIndex = 2
+          } else {
+            // 不支持的轴，跳过
+            Matrix4.clone(resultMatrix, mountedPrimitive.modelMatrix)
+            return
+          }
+
+          // 只有当被拾取的轴参与了轴交换时才反转旋转方向
+          // 判断标准：gizmo轴索引 != 映射到的节点轴索引，说明发生了交换
+          const axisSwapped = gizmoAxisIndex !== localRotationAxis
+          if (axisSwapped && isOddPermutation) {
+            axisSign = -axisSign
+          }
+
+          console.log('选定的局部旋转轴:', axisNames[localRotationAxis], ', 符号(含奇置换修正):', axisSign)
+
+          // 从 rotate（getRotate 返回的旋转矩阵）提取旋转角度
+          // getRotate 返回的是 Matrix3，我们需要从中提取角度
+          // 由于 rotate 是单轴旋转，可以从矩阵中提取角度
+          let angle = 0
+          if (pickedGizmoId === GizmoPart.xAxis) {
+            // fromRotationX 的矩阵：[1, 0, 0], [0, cos, sin], [0, -sin, cos]
+            angle = Math.atan2(rotate[7], rotate[8]) // atan2(sin, cos)
+          } else if (pickedGizmoId === GizmoPart.yAxis) {
+            // fromRotationY 的矩阵：[cos, 0, -sin], [0, 1, 0], [sin, 0, cos]
+            angle = Math.atan2(rotate[2], rotate[0]) // atan2(-(-sin), cos) = atan2(sin at [2], cos at [0])
+          } else if (pickedGizmoId === GizmoPart.zAxis) {
+            // fromRotationZ 的矩阵：[cos, sin, 0], [-sin, cos, 0], [0, 0, 1]
+            angle = Math.atan2(rotate[1], rotate[0]) // atan2(sin, cos)
+          }
+
+          console.log('提取的旋转角度(rad):', angle.toFixed(6), ', 度:', (angle * 180 / Math.PI).toFixed(2))
+
+          // 累积角度
+          const previousAngle = (mountedPrimitive as any)._rotateAccumulatedAngle
+          ;(mountedPrimitive as any)._rotateAccumulatedAngle += angle * axisSign
+
+          console.log('累积角度: 之前=', previousAngle.toFixed(6), ', 增量=', (angle * axisSign).toFixed(6), ', 之后=', (mountedPrimitive as any)._rotateAccumulatedAngle.toFixed(6))
+
+          // 在节点局部空间中创建旋转矩阵
+          let localRotation: Matrix3
+          const totalAngle = (mountedPrimitive as any)._rotateAccumulatedAngle
+          if (localRotationAxis === 0) {
+            localRotation = Matrix3.fromRotationX(totalAngle, new Matrix3())
+          } else if (localRotationAxis === 1) {
+            localRotation = Matrix3.fromRotationY(totalAngle, new Matrix3())
+          } else {
+            localRotation = Matrix3.fromRotationZ(totalAngle, new Matrix3())
+          }
+
+          console.log('应用旋转: 绕节点' + axisNames[localRotationAxis] + '轴旋转', (totalAngle * 180 / Math.PI).toFixed(2), '度')
+
+          // 获取节点起始的旋转、平移和缩放
+          const nodeStartRotation = Matrix4.getMatrix3(nodeStartMatrix, new Matrix3())
+          const nodeTranslation = Matrix4.getTranslation(nodeStartMatrix, new Cartesian3())
+          const nodeScale = Matrix4.getScale(nodeStartMatrix, new Cartesian3())
+
+          console.log('节点起始平移:', `(${nodeTranslation.x.toFixed(4)}, ${nodeTranslation.y.toFixed(4)}, ${nodeTranslation.z.toFixed(4)})`)
+          console.log('节点起始缩放:', `(${nodeScale.x.toFixed(4)}, ${nodeScale.y.toFixed(4)}, ${nodeScale.z.toFixed(4)})`)
+
+          // 应用旋转：newRotation = localRotation * startRotation
+          const newNodeRotation = Matrix3.multiply(localRotation, nodeStartRotation, new Matrix3())
+
+          // 构建新的节点矩阵（保持原有缩放）
+          const newNodeMatrix = Matrix4.fromRotationTranslation(newNodeRotation, nodeTranslation, new Matrix4())
+          Matrix4.multiplyByScale(newNodeMatrix, nodeScale, newNodeMatrix)
+
+          // 更新节点矩阵
+          node.matrix = newNodeMatrix
+          console.log('新节点矩阵已应用')
+          console.log('=== 调试信息结束 ===')
+
+          if (runtimeNode) {
+            runtimeNode.transform = newNodeMatrix
+          }
+
+          // 同时更新 wrapper 的 modelMatrix 以保持同步
+          Matrix4.clone(resultMatrix, mountedPrimitive.modelMatrix)
+        }
         else {
           Matrix4.clone(resultMatrix, mountedPrimitive.modelMatrix)
+
+          // 更新 Gizmo 的 modelMatrix，但移除缩放分量以避免 Gizmo 变形（与 Scale 模式统一）
+          // 提取位置
+          const position = Matrix4.getTranslation(resultMatrix, new Cartesian3())
+          // 提取旋转矩阵并归一化以移除缩放
+          const rotationWithScale = Matrix4.getMatrix3(resultMatrix, new Matrix3())
+          const col0 = new Cartesian3(rotationWithScale[0], rotationWithScale[1], rotationWithScale[2])
+          const col1 = new Cartesian3(rotationWithScale[3], rotationWithScale[4], rotationWithScale[5])
+          const col2 = new Cartesian3(rotationWithScale[6], rotationWithScale[7], rotationWithScale[8])
+          Cartesian3.normalize(col0, col0)
+          Cartesian3.normalize(col1, col1)
+          Cartesian3.normalize(col2, col2)
+          const pureRotation = new Matrix3(
+            col0.x, col1.x, col2.x,
+            col0.y, col1.y, col2.y,
+            col0.z, col1.z, col2.z
+          )
+          // 构建不含缩放的 Gizmo 矩阵
+          const gizmoMatrix = Matrix4.fromRotationTranslation(pureRotation, position, new Matrix4())
+          Matrix4.clone(gizmoMatrix, gizmo.modelMatrix)
         }
       }
     }
@@ -662,6 +1066,86 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
             entity.box.dimensions = newDimensions
           }
         }
+        else if (mountedPrimitive && (mountedPrimitive as any)._isNode) {
+          // 处理节点的缩放更新
+          const node = (mountedPrimitive as any)._node
+          const model = (mountedPrimitive as any)._model
+          const runtimeNode = node._runtimeNode
+          const sceneGraph = (mountedPrimitive as any)._sceneGraph || model._sceneGraph
+          const axisCorrectionMatrix = (mountedPrimitive as any)._axisCorrectionMatrix || Matrix4.IDENTITY
+
+          // 获取节点的当前变换矩阵
+          const nodeTransform = runtimeNode?.transform || node.matrix || Matrix4.IDENTITY
+
+          // 保存起始矩阵供缩放使用（仅在开始缩放时保存一次）
+          if (!(mountedPrimitive as any)._nodeStartMatrix) {
+            ;(mountedPrimitive as any)._nodeStartMatrix = nodeTransform.clone()
+          }
+          const nodeStartMatrix = (mountedPrimitive as any)._nodeStartMatrix
+
+          // 使用与 translate 模式相同的方式计算完整的节点世界矩阵
+          // worldMatrix = modelMatrix × components.transform × axisCorrectionMatrix × transformToRoot × transform
+          const modelScale = (model as any).scale ?? 1
+          const transformToRoot = runtimeNode?.transformToRoot || Matrix4.IDENTITY
+          const componentsTransform = sceneGraph?.components?.transform || Matrix4.IDENTITY
+
+          // 计算中间变换矩阵（不含 modelMatrix，因为 gizmo 已经在 model 坐标系中）
+          const step1 = Matrix4.multiply(transformToRoot, nodeTransform, new Matrix4())
+          const step2 = Matrix4.multiply(axisCorrectionMatrix, step1, new Matrix4())
+          const step3 = Matrix4.multiply(componentsTransform, step2, new Matrix4())
+          let localToModelMatrix: Matrix4
+          if (modelScale !== 1) {
+            const scaleMatrix = Matrix4.fromUniformScale(modelScale)
+            localToModelMatrix = Matrix4.multiply(scaleMatrix, step3, new Matrix4())
+          } else {
+            localToModelMatrix = step3
+          }
+
+          // 获取从模型空间到节点局部空间的逆矩阵
+          const modelToLocalMatrix = Matrix4.inverse(localToModelMatrix, new Matrix4())
+
+          // 将 gizmo 的 X/Y/Z 单位向量转换到节点局部坐标系
+          // 这告诉我们 gizmo 的每个轴在节点局部坐标系中对应哪个方向
+          const localXDir = Matrix4.multiplyByPointAsVector(modelToLocalMatrix, Cartesian3.UNIT_X, new Cartesian3())
+          const localYDir = Matrix4.multiplyByPointAsVector(modelToLocalMatrix, Cartesian3.UNIT_Y, new Cartesian3())
+          const localZDir = Matrix4.multiplyByPointAsVector(modelToLocalMatrix, Cartesian3.UNIT_Z, new Cartesian3())
+
+          // 找出每个 gizmo 轴对应的节点局部轴（X=0, Y=1, Z=2）
+          const findMaxAxis = (dir: Cartesian3) => {
+            const absX = Math.abs(dir.x)
+            const absY = Math.abs(dir.y)
+            const absZ = Math.abs(dir.z)
+            if (absX >= absY && absX >= absZ) return 0
+            if (absY >= absZ) return 1
+            return 2
+          }
+
+          const xIdx = findMaxAxis(localXDir)
+          const yIdx = findMaxAxis(localYDir)
+          const zIdx = findMaxAxis(localZDir)
+
+          // 构建局部缩放向量
+          const localScaleArr = [1, 1, 1]
+          localScaleArr[xIdx] = scale.x
+          localScaleArr[yIdx] = scale.y
+          localScaleArr[zIdx] = scale.z
+
+          const localScale = new Cartesian3(localScaleArr[0], localScaleArr[1], localScaleArr[2])
+
+          // 应用缩放到节点的起始矩阵
+          const scaledMatrix = Matrix4.multiplyByScale(
+            nodeStartMatrix,
+            localScale,
+            new Matrix4()
+          )
+
+          // 更新节点矩阵
+          node.matrix = scaledMatrix
+          if (runtimeNode) {
+            runtimeNode.transform = scaledMatrix
+          }
+          Matrix4.clone(scaledMatrix, mountedPrimitive.modelMatrix)
+        }
         else if (mountedPrimitive) {
           const resultMatrix = Matrix4.multiplyByScale(
             mountedPrimitiveStartModelMatrix,
@@ -669,6 +1153,26 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
             scratchScaleMatrix,
           )
           Matrix4.clone(resultMatrix, mountedPrimitive.modelMatrix)
+
+          // 更新 Gizmo 的 modelMatrix，但移除缩放分量以避免 Gizmo 变形
+          // 提取位置
+          const position = Matrix4.getTranslation(resultMatrix, new Cartesian3())
+          // 提取旋转矩阵并归一化以移除缩放
+          const rotationWithScale = Matrix4.getMatrix3(resultMatrix, new Matrix3())
+          const col0 = new Cartesian3(rotationWithScale[0], rotationWithScale[1], rotationWithScale[2])
+          const col1 = new Cartesian3(rotationWithScale[3], rotationWithScale[4], rotationWithScale[5])
+          const col2 = new Cartesian3(rotationWithScale[6], rotationWithScale[7], rotationWithScale[8])
+          Cartesian3.normalize(col0, col0)
+          Cartesian3.normalize(col1, col1)
+          Cartesian3.normalize(col2, col2)
+          const pureRotation = new Matrix3(
+            col0.x, col1.x, col2.x,
+            col0.y, col1.y, col2.y,
+            col0.z, col1.z, col2.z
+          )
+          // 构建不含缩放的 Gizmo 矩阵
+          const gizmoMatrix = Matrix4.fromRotationTranslation(pureRotation, position, new Matrix4())
+          Matrix4.clone(gizmoMatrix, gizmo.modelMatrix)
         }
       }
     }
@@ -1087,7 +1591,6 @@ function getScale(
       scale = new Cartesian3(1, 1, factor)
       break
   }
-
   return scale
 }
 
