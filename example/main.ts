@@ -1,5 +1,5 @@
 import * as Cesium from 'cesium'
-import { CoordinateMode, Gizmo, GizmoMode } from '../src/index'
+import { CoordinateMode, Gizmo, GizmoMode } from 'cesium-transform-controls'
 
 declare const dat: any
 
@@ -19,7 +19,7 @@ const baseLat = 29.57088337
 const baseHeight = 0
 
 const model = await Cesium.Model.fromGltfAsync({
-  url: 'luaz.glb',
+  url: './luaz.glb',  
   modelMatrix: Cesium.Transforms.headingPitchRollToFixedFrame(
     Cesium.Cartesian3.fromDegrees(baseLon, baseLat, baseHeight),
     new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(0), Cesium.Math.toRadians(0), Cesium.Math.toRadians(0)),
