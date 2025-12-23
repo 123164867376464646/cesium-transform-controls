@@ -2,7 +2,7 @@
 
 Cesium 3D 变换控制器，为 Cesium 实体和模型提供可视化的平移、旋转、缩放操作。
 
-![image.png](image.png)
+![image.png](image.webp)
 
 ## 功能特性
 
