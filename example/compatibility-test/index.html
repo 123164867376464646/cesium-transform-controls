@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cesium Transform Controls - 版本兼容性测试</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        
+        #cesiumContainer {
+            width: 100%;
+            height: 100vh;
+        }
+        
+        .controls {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: rgba(30, 30, 50, 0.95);
+            padding: 15px 20px;
+            border-radius: 8px;
+            z-index: 100;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            min-width: 280px;
+        }
+        
+        .controls h3 {
+            margin-bottom: 15px;
+            color: #4fc3f7;
+            font-size: 14px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 8px;
+        }
+        
+        .version-info {
+            background: #2a2a4a;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+        
+        .version-info .label {
+            color: #888;
+            font-size: 12px;
+        }
+        
+        .version-info .value {
+            color: #4fc3f7;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        
+        .control-row {
+            margin-bottom: 10px;
+        }
+        
+        .control-row label {
+            display: block;
+            color: #aaa;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+        
+        .control-row select, .control-row button {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #444;
+            border-radius: 4px;
+            background: #333;
+            color: #fff;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        
+        .control-row select:hover, .control-row button:hover {
+            border-color: #4fc3f7;
+        }
+        
+        .control-row button {
+            background: #4fc3f7;
+            color: #1a1a2e;
+            font-weight: bold;
+            border: none;
+        }
+        
+        .control-row button:hover {
+            background: #29b6f6;
+        }
+        
+        .status {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+        }
+        
+        .status.success { background: #1b5e20; color: #a5d6a7; }
+        .status.error { background: #b71c1c; color: #ffcdd2; }
+        .status.loading { background: #1565c0; color: #bbdefb; }
+        
+        .test-actions {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #333;
+        }
+        
+        .test-actions button {
+            margin-bottom: 8px;
+        }
+
+        .info-panel {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(30, 30, 50, 0.95);
+            padding: 15px 20px;
+            border-radius: 8px;
+            z-index: 100;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            min-width: 200px;
+            font-size: 12px;
+        }
+        
+        .info-panel h4 {
+            color: #4fc3f7;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+        
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+        
+        .info-row .label { color: #888; }
+        .info-row .value { color: #fff; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <div id="cesiumContainer"></div>
+    
+    <div class="controls">
+        <h3>🧪 Cesium 版本兼容性测试</h3>
+        
+        <div class="version-info">
+            <div class="label">当前 Cesium 版本</div>
+            <div class="value" id="currentVersion">加载中...</div>
+        </div>
+        
+        <div class="control-row">
+            <label>选择 Cesium 版本</label>
+            <select id="versionSelect">
+                <option value="1.136.0">1.136.0 (最新)</option>
+                <option value="1.135.0">1.135.0</option>
+                <option value="1.130.0">1.130.0</option>
+                <option value="1.125.0">1.125.0</option>
+                <option value="1.121.0">1.121.0</option>
+                <option value="1.120.0">1.120.0</option>
+                <option value="1.119.0">1.119.0</option>
+                <option value="1.118.0">1.118.0</option>
+                <option value="1.117.0">1.117.0</option>
+                <option value="1.116.0">1.116.0</option>
+                <option value="1.115.0">1.115.0</option>
+                <option value="1.114.0">1.114.0</option>
+                <option value="1.113.0">1.113.0</option>
+                <option value="1.110.0">1.110.0</option>
+                <option value="1.105.0">1.105.0</option>
+                <option value="1.100.0">1.100.0</option>
+            </select>
+        </div>
+        
+        <div class="control-row">
+            <button id="switchVersion">🔄 切换版本并刷新</button>
+        </div>
+        
+        <div class="test-actions">
+            <div class="control-row">
+                <label>Gizmo 模式</label>
+                <select id="gizmoMode">
+                    <option value="translate">平移 (translate)</option>
+                    <option value="rotate">旋转 (rotate)</option>
+                    <option value="scale">缩放 (scale)</option>
+                </select>
+            </div>
+            <div class="control-row">
+                <label>坐标系模式</label>
+                <select id="coordMode">
+                    <option value="local">本地 (local)</option>
+                    <option value="surface">地表 (surface)</option>
+                </select>
+            </div>
+        </div>
+        
+        <div id="status" class="status loading">正在加载...</div>
+    </div>
+    
+    <div class="info-panel">
+        <h4>📊 模型信息</h4>
+        <div class="info-row">
+            <span class="label">名称:</span>
+            <span class="value" id="infoName">-</span>
+        </div>
+        <div class="info-row">
+            <span class="label">类型:</span>
+            <span class="value" id="infoType">-</span>
+        </div>
+        <div class="info-row">
+            <span class="label">经度:</span>
+            <span class="value" id="infoLon">-</span>
+        </div>
+        <div class="info-row">
+            <span class="label">纬度:</span>
+            <span class="value" id="infoLat">-</span>
+        </div>
+        <div class="info-row">
+            <span class="label">高度:</span>
+            <span class="value" id="infoHeight">-</span>
+        </div>
+    </div>
+
+    <!-- 动态加载脚本 -->
+    <script>
+        // 从 URL 参数获取版本，默认 1.135.0
+        const urlParams = new URLSearchParams(window.location.search);
+        let cesiumVersion = urlParams.get('v') || '1.135.0';
+        
+        // 更新下拉框选中项
+        document.getElementById('versionSelect').value = cesiumVersion;
+        
+        // 辅助函数：动态加载脚本
+        function loadScript(src) {
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = src;
+                script.onload = resolve;
+                script.onerror = reject;
+                document.head.appendChild(script);
+            });
+        }
+        
+        // 辅助函数：动态加载 CSS
+        function loadCSS(href) {
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = href;
+            document.head.appendChild(link);
+        }
+        
+        // CDN 列表（按优先级排序）
+        const cdnList = [
+            `https://unpkg.com/cesium@${cesiumVersion}/Build/Cesium/Cesium.js`,
+            `https://cdn.jsdelivr.net/npm/cesium@${cesiumVersion}/Build/Cesium/Cesium.js`,
+            `https://cesium.com/downloads/cesiumjs/releases/${cesiumVersion}/Build/Cesium/Cesium.js`,
+        ];
+        
+        const cssCdnList = [
+            `https://unpkg.com/cesium@${cesiumVersion}/Build/Cesium/Widgets/widgets.css`,
+            `https://cdn.jsdelivr.net/npm/cesium@${cesiumVersion}/Build/Cesium/Widgets/widgets.css`,
+            `https://cesium.com/downloads/cesiumjs/releases/${cesiumVersion}/Build/Cesium/Widgets/widgets.css`,
+        ];
+        
+        // 按顺序加载所有依赖
+        async function loadDependencies() {
+            const statusEl = document.getElementById('status');
+            
+            // 1. 加载 Cesium CSS
+            loadCSS(cssCdnList[0]);
+            
+            // 2. 尝试从不同 CDN 加载 Cesium
+            let cesiumLoaded = false;
+            for (const cdn of cdnList) {
+                try {
+                    statusEl.textContent = `正在从 CDN 加载 Cesium ${cesiumVersion}...`;
+                    await loadScript(cdn);
+                    console.log('Cesium loaded from:', cdn);
+                    cesiumLoaded = true;
+                    break;
+                } catch (e) {
+                    console.warn('Failed to load from:', cdn);
+                }
+            }
+            
+            if (!cesiumLoaded) {
+                throw new Error(`无法加载 Cesium ${cesiumVersion}，所有 CDN 都失败`);
+            }
+            
+            // 3. 确保 Cesium 加载成功后，再加载 Gizmo UMD
+            statusEl.textContent = '正在加载 CesiumTransformControls...';
+            await loadScript('../../dist/cesium-transform-controls.umd.js');
+            console.log('CesiumTransformControls loaded');
+            
+            // 4. 验证加载结果
+            if (typeof CesiumTransformControls === 'undefined' || !CesiumTransformControls.Gizmo) {
+                throw new Error('CesiumTransformControls 加载失败或结构不正确');
+            }
+            
+            // 5. 初始化应用
+            await initApp();
+        }
+        
+        // 切换版本
+        document.getElementById('switchVersion').onclick = () => {
+            const newVersion = document.getElementById('versionSelect').value;
+            window.location.href = `?v=${newVersion}`;
+        };
+        
+        // 启动加载流程
+        loadDependencies().catch(err => {
+            console.error('加载失败:', err);
+            document.getElementById('status').className = 'status error';
+            document.getElementById('status').textContent = `❌ ${err.message}`;
+        });
+    </script>
+    
+    <script>
+        let viewer, model, gizmo;
+        
+        async function initApp() {
+            try {
+                document.getElementById('currentVersion').textContent = cesiumVersion;
+                document.getElementById('status').className = 'status loading';
+                document.getElementById('status').textContent = '正在初始化 Cesium...';
+                
+                // 检查 Cesium 是否加载成功
+                if (typeof Cesium === 'undefined') {
+                    throw new Error('Cesium 未加载');
+                }
+                console.log('Cesium 版本:', Cesium.VERSION);
+                
+                // 检查 cesium-transform-controls 是否加载成功
+                if (typeof CesiumTransformControls === 'undefined') {
+                    throw new Error('CesiumTransformControls 未加载');
+                }
+                console.log('CesiumTransformControls:', CesiumTransformControls);
+                
+                // 初始化 Viewer
+                viewer = new Cesium.Viewer('cesiumContainer', {
+                    baseLayerPicker: false,
+                    geocoder: false,
+                    homeButton: false,
+                    sceneModePicker: false,
+                    navigationHelpButton: false,
+                    animation: false,
+                    timeline: false,
+                    infoBox: false,
+                });
+                
+                document.getElementById('status').textContent = '正在加载模型...';
+                
+                const baseLon = 106.58446188;
+                const baseLat = 29.57088337;
+                const baseHeight = 0;
+                
+                // 加载模型
+                model = await Cesium.Model.fromGltfAsync({
+                    url: '../luaz.glb',
+                    modelMatrix: Cesium.Transforms.headingPitchRollToFixedFrame(
+                        Cesium.Cartesian3.fromDegrees(baseLon, baseLat, baseHeight),
+                        new Cesium.HeadingPitchRoll(0, 0, 0)
+                    ),
+                    scale: 10,
+                });
+                viewer.scene.primitives.add(model);
+                
+                // 等待模型就绪
+                await new Promise((resolve) => {
+                    model.readyEvent.addEventListener(resolve);
+                });
+                
+                document.getElementById('status').textContent = '正在初始化 Gizmo...';
+                
+                // 初始化 Gizmo
+                const { Gizmo, GizmoMode, CoordinateMode } = CesiumTransformControls;
+                
+                gizmo = new Gizmo({
+                    onGizmoPointerMove: () => updateInfo(),
+                });
+                gizmo.attach(viewer);
+                
+                // 挂载到子节点
+                const nodeName = 'door_R_luaz_diffuse_0';
+                const node = model.getNode(nodeName);
+                if (node) {
+                    gizmo.mountToNode(node, model, viewer);
+                } else {
+                    gizmo.mountToPrimitive(model, viewer);
+                }
+                
+                // 飞到模型
+                const boundingSphere = model.boundingSphere;
+                viewer.camera.flyToBoundingSphere(boundingSphere, {
+                    duration: 0,
+                    offset: new Cesium.HeadingPitchRange(
+                        Cesium.Math.toRadians(-45),
+                        Cesium.Math.toRadians(-15),
+                        boundingSphere.radius * 3
+                    ),
+                });
+                
+                // 绑定模式切换
+                document.getElementById('gizmoMode').onchange = (e) => {
+                    const mode = e.target.value;
+                    switch (mode) {
+                        case 'translate': gizmo.setMode(GizmoMode.translate); break;
+                        case 'rotate': gizmo.setMode(GizmoMode.rotate); break;
+                        case 'scale': gizmo.setMode(GizmoMode.scale); break;
+                    }
+                };
+                
+                document.getElementById('coordMode').onchange = (e) => {
+                    const mode = e.target.value;
+                    gizmo.coordinateMode = mode === 'surface' ? CoordinateMode.surface : CoordinateMode.local;
+                };
+                
+                // 更新信息
+                updateInfo();
+                viewer.scene.preRender.addEventListener(updateInfo);
+                
+                document.getElementById('status').className = 'status success';
+                document.getElementById('status').textContent = `✅ Cesium ${cesiumVersion} + Gizmo 加载成功!`;
+                
+                // 导出到全局便于调试
+                window.viewer = viewer;
+                window.model = model;
+                window.gizmo = gizmo;
+                window.Cesium = Cesium;
+                
+            } catch (error) {
+                console.error('初始化失败:', error);
+                document.getElementById('status').className = 'status error';
+                document.getElementById('status').textContent = `❌ 错误: ${error.message}`;
+            }
+        }
+        
+        function updateInfo() {
+            if (!gizmo || !gizmo._mountedPrimitive) return;
+            
+            const mounted = gizmo._mountedPrimitive;
+            
+            // 名称和类型
+            let name = '-', type = '-';
+            if (mounted._isNode && mounted._node) {
+                name = mounted._node.name || 'ModelNode';
+                type = 'ModelNode';
+            } else if (mounted instanceof Cesium.Model) {
+                name = 'luaz.glb';
+                type = 'Model';
+            }
+            
+            document.getElementById('infoName').textContent = name;
+            document.getElementById('infoType').textContent = type;
+            
+            // 位置
+            try {
+                const position = Cesium.Matrix4.getTranslation(mounted.modelMatrix, new Cesium.Cartesian3());
+                const carto = Cesium.Cartographic.fromCartesian(position);
+                if (carto) {
+                    document.getElementById('infoLon').textContent = Cesium.Math.toDegrees(carto.longitude).toFixed(6);
+                    document.getElementById('infoLat').textContent = Cesium.Math.toDegrees(carto.latitude).toFixed(6);
+                    document.getElementById('infoHeight').textContent = carto.height.toFixed(2) + 'm';
+                }
+            } catch (e) {}
+        }
+    </script>
+</body>
+</html>

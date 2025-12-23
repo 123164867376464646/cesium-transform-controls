@@ -1,7 +1,7 @@
 import type { Primitive } from 'cesium'
 import type { Gizmo } from './Gizmo'
 import { Cartesian3, destroyObject, Matrix4, Transforms } from 'cesium'
-import { GizmoMode, TranslateMode } from './Gizmo'
+import { GizmoMode, CoordinateMode } from './Gizmo'
 import { getScaleForMinimumSize } from './minPixelSizeScaler'
 
 export class GizmoComponentPrimitive {
@@ -14,8 +14,8 @@ export class GizmoComponentPrimitive {
   _mode: GizmoMode
   constructor(gizmo: Gizmo, mode: GizmoMode) {
     this._gizmo = gizmo
-    this._part = [] // [x, y, z]
-    this._helper = [] // helper lines [x, y, z]
+    this._part = [] // [x轴, y轴, z轴]
+    this._helper = [] // 辅助线 [x轴, y轴, z轴]
     this._show = true
     this._scale = 1
     this._scaleMatrix = new Matrix4()
@@ -27,14 +27,14 @@ export class GizmoComponentPrimitive {
       return
     }
 
-    // Sync gizmo location with mounted primitive when it changes externally
+    // 当挂载的图元位置发生外部变化时，同步 Gizmo 位置
     this._gizmo.updateModelMatrixFromMountedPrimitive()
 
-    // fix gizmo's screen size
+    // 修正 Gizmo 的屏幕尺寸
     this._scale = getScaleForMinimumSize(this._gizmo, frameState)
 
     if (this._mode === GizmoMode.translate) {
-      if (this._gizmo.transMode === TranslateMode.local) {
+      if (this._gizmo.coordinateMode === CoordinateMode.local) {
         // Local模式：使用物体自身的旋转坐标系（轴向跟随物体旋转）
         this._scaleMatrix = Matrix4.multiplyByUniformScale(
           this._gizmo.modelMatrix,
@@ -51,13 +51,33 @@ export class GizmoComponentPrimitive {
       }
     }
     else {
-      // 旋转和缩放模式下，始终使用物体自身的坐标系
-      this._scaleMatrix = Matrix4.multiplyByUniformScale(
-        this._gizmo.modelMatrix,
-        this._scale,
-        new Matrix4(),
-      )
+      if (this._mode === GizmoMode.rotate) {
+        if (this._gizmo.coordinateMode === CoordinateMode.local) {
+          // Local模式：轴向跟随物体
+          this._scaleMatrix = Matrix4.multiplyByUniformScale(
+            this._gizmo.modelMatrix,
+            this._scale,
+            new Matrix4(),
+          )
+        }
+        else {
+          // Surface模式：轴向固定 ENU
+          const NEUMatrix = Transforms.eastNorthUpToFixedFrame(
+            Matrix4.getTranslation(this._gizmo.modelMatrix, new Cartesian3()),
+          )
+          this._scaleMatrix = Matrix4.multiplyByUniformScale(NEUMatrix, this._scale, NEUMatrix)
+        }
+      }
+      else {
+        // Scale 模式：始终使用 Local（忽略 coordinateMode）
+        this._scaleMatrix = Matrix4.multiplyByUniformScale(
+          this._gizmo.modelMatrix,
+          this._scale,
+          new Matrix4(),
+        )
+      }
     }
+
 
     for (const p of this._part) {
       p.modelMatrix = this._scaleMatrix
@@ -65,7 +85,7 @@ export class GizmoComponentPrimitive {
       p.update(frameState)
     }
 
-    // Update helper lines
+    // 更新辅助线
     for (const h of this._helper) {
       h.modelMatrix = this._scaleMatrix
       // @ts-expect-error - Cesium Primitive.update() actually accepts frameState internally
@@ -86,7 +106,7 @@ export class GizmoComponentPrimitive {
         }
       }
       catch (error) {
-        console.error('Error destroying part:', error)
+        console.error('销毁部件时出错:', error)
       }
     }
     this._part = []
@@ -99,7 +119,7 @@ export class GizmoComponentPrimitive {
         }
       }
       catch (error) {
-        console.error('Error destroying helper:', error)
+        console.error('销毁辅助线时出错:', error)
       }
     }
     this._helper = []

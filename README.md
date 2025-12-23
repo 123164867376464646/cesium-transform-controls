@@ -27,12 +27,7 @@ Cesium 3D 变换控制器，为 Cesium 实体和模型提供可视化的平移�
 
 ### ⏳ 待扩展
 
-- [ ] Entity 旋转支持
-- [ ] Entity 缩放支持
-- [ ] 多对象同时变换
-- [ ] 吸附功能（网格吸附、角度吸附）
-- [ ] 变换历史记录（撤销/重做）
-- [ ] 自定义 Gizmo 样式和颜色
+- [ ] 包围盒OBB/AABB
 
 ## 环境要求
 
@@ -50,7 +45,7 @@ npm install cesium-transform-controls
 
 ```typescript
 import * as Cesium from 'cesium'
-import { Gizmo, GizmoMode, TranslateMode } from 'cesium-transform-controls'
+import { Gizmo, GizmoMode, CoordinateMode } from 'cesium-transform-controls'
 
 const viewer = new Cesium.Viewer('cesiumContainer')
 
@@ -67,7 +62,7 @@ viewer.scene.primitives.add(model)
 // 创建 Gizmo
 const gizmo = new Gizmo()
 gizmo.attach(viewer)
-gizmo.mountToPrimitive(model, viewer)
+gizmo.mountToPrimitive(model, viewer) //手动绑定模型
 
 // 设置模式
 gizmo.setMode(GizmoMode.translate)  // 平移
@@ -104,6 +99,9 @@ gizmo.mountToPrimitive(model, viewer)
 
 // 或挂载到 Entity
 gizmo.mountToEntity(entity, viewer)
+
+// 或挂在到模型的某个子模型
+gizmo.mountToNode(node, model, viewer)
 ```
 
 ### 方式二：鼠标点击选中
@@ -167,6 +165,7 @@ new Gizmo(options?: {
 | `detach()` | 从 Viewer 移除 |
 | `mountToPrimitive(primitive, viewer)` | 挂载到 Primitive |
 | `mountToEntity(entity, viewer)` | 挂载到 Entity |
+| `mountToNode(node, model, viewer)` | 挂载到模型的子节点（ModelNode） |
 | `setMode(mode)` | 设置变换模式 |
 | `setEnabled(enabled)` | 设置启用/禁用状态 |
 
@@ -200,11 +199,11 @@ GizmoMode.rotate     // 旋转
 GizmoMode.scale      // 缩放
 ```
 
-**TranslateMode** - 平移坐标系
+**CoordinateMode** - 坐标系模式
 
 ```typescript
-TranslateMode.local    // 本地坐标系
-TranslateMode.surface  // 地表坐标系
+CoordinateMode.local    // 本地坐标系
+CoordinateMode.surface  // 地表坐标系
 ```
 
 ## 运行示例

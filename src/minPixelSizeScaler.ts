@@ -25,7 +25,7 @@ export function getScaleForMinimumSize(model: Gizmo, frameState: any): number {
   const scratchPosition = new Cartesian3()
   const scratchCartographic = new Cartographic()
 
-  // Compute size of bounding sphere in pixels
+  // 计算包围球的像素大小
   const context = frameState.context
   const maxPixelSize = Math.max(
     context.drawingBufferWidth,
@@ -55,7 +55,7 @@ export function getScaleForMinimumSize(model: Gizmo, frameState: any): number {
 
   const metersPerPixel = getScaleInPixels(scratchPosition, radius, frameState)
 
-  // metersPerPixel is always > 0.0
+  // metersPerPixel 始终大于 0.0
   const pixelsPerMeter = 1.0 / metersPerPixel
   const diameterInPixels = Math.min(
     pixelsPerMeter * 2.0 * radius,
@@ -63,7 +63,7 @@ export function getScaleForMinimumSize(model: Gizmo, frameState: any): number {
   )
 
   let scale = 1
-  // Maintain model's minimum pixel size
+  // 维持模型的最小像素尺寸
   if (diameterInPixels < model.length) {
     scale = (model.length * metersPerPixel) / (2.0 * radius)
   }

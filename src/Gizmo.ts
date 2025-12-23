@@ -59,9 +59,9 @@ export enum GizmoMode {
   scale = 'scale',
 }
 
-export enum TranslateMode {
+export enum CoordinateMode {
   local = 'local', // 使用物体自身坐标系
-  surface = 'surface', // 使用地表切线坐标系
+  surface = 'surface', // 使用地表切线坐标系（ENU）
 }
 
 interface GizmoOptions {
@@ -75,7 +75,7 @@ export class Gizmo {
   applyTransformationToMountedPrimitive: boolean
   modelMatrix: Matrix4
   length: number
-  transMode: TranslateMode | null
+  coordinateMode: CoordinateMode | null
   _viewer: Viewer | null
   _mountedPrimitive: Primitive | null
   _transPrimitives: GizmoComponentPrimitive | null
@@ -104,8 +104,8 @@ export class Gizmo {
     this.mode = null
     this.applyTransformationToMountedPrimitive = true
     this.modelMatrix = Matrix4.clone(Matrix4.IDENTITY, new Matrix4())
-    this.length = 200 + 50 // gizmo pixel length;
-    this.transMode = null
+    this.length = 200 + 50 // Gizmo 像素长度;
+    this.coordinateMode = null
 
     this._viewer = null
     this._mountedPrimitive = null
@@ -132,16 +132,16 @@ export class Gizmo {
     })
     // Plane materials (semi-transparent)
     this._xyPlaneMaterial = Material.fromType('Color', {
-      color: new Color(0.0, 0.0, 1.0, 0.6), // Blue for XY plane (Z axis)
+      color: new Color(0.0, 0.0, 1.0, 0.6), // XY 平面颜色 (蓝色 - Z轴)
     })
     this._xzPlaneMaterial = Material.fromType('Color', {
-      color: new Color(0.0, 1.0, 0.0, 0.6), // Green for XZ plane (Y axis)
+      color: new Color(0.0, 1.0, 0.0, 0.6), // XZ 平面颜色 (绿色 - Y轴)
     })
     this._yzPlaneMaterial = Material.fromType('Color', {
-      color: new Color(1.0, 0.0, 0.0, 0.6), // Red for YZ plane (X axis)
+      color: new Color(1.0, 0.0, 0.0, 0.6), // YZ 平面颜色 (红色 - X轴)
     })
     this._planeHighlightMaterial = Material.fromType('Color', {
-      color: new Color(1.0, 1.0, 0.0, 0.5), // Yellow highlight for planes
+      color: new Color(1.0, 1.0, 0.0, 0.5), // 平面高亮颜色 (黄色)
     })
 
     this.onGizmoPointerDown = options.onGizmoPointerDown
@@ -162,7 +162,7 @@ export class Gizmo {
     const lineLength = 0.8
     const lineRadius = 0.01
 
-    // reuseable geometry。可以使用polyline Arrow，或者 polyline Volume！！！
+    // 可复用的几何体。可以使用 polyline Arrow，或者 polyline Volume
     const arrowGeometry = new CylinderGeometry({
       length: arrowLength,
       topRadius: 0,
@@ -372,8 +372,8 @@ export class Gizmo {
     this._transPrimitives = transPrimitive
     this._transPrimitives._show = false
 
-    // * create helper lines for all modes
-    const helperLength = 5000 // Very long line
+    // * 创建辅助线（所有模式通用）
+    const helperLength = 5000 // 非常长的辅助线
     const createHelperLine = (axis: Cartesian3) => {
       const helperPoints = [
         Cartesian3.multiplyByScalar(axis, -helperLength / 2, new Cartesian3()),
@@ -397,7 +397,7 @@ export class Gizmo {
         }),
         modelMatrix: Matrix4.IDENTITY,
         asynchronous: false,
-        show: false, // Initially hidden
+        show: false, // 初始隐藏
       })
     }
 
@@ -601,8 +601,8 @@ export class Gizmo {
     const planeSize = 0.3
     const planeOffset = lineLength * 0.4 // Position at middle of axes
 
-    // XY Plane (for Z axis manipulation) - positioned at X and Y intersection
-    // No rotation needed, default plane is in XY
+    // XY 平面 (用于 Z 轴操作) - 位于 X 和 Y 的交汇处
+    // 不需要旋转，默认平面就在 XY 平面上
     const xyPlaneGeometry = new PlaneGeometry({
       vertexFormat: MaterialAppearance.MaterialSupport.TEXTURED.vertexFormat,
     })
@@ -625,8 +625,8 @@ export class Gizmo {
       modelMatrix: xyPlaneModelMatrix,
     })
 
-    // XZ Plane (for Y axis manipulation) - positioned at X and Z intersection
-    // Rotate 90 degrees around X axis to align with XZ plane
+    // XZ 平面 (用于 Y 轴操作) - 位于 X 和 Z 的交汇处
+    // 绕 X 轴旋转 90 度以对齐 XZ 平面
     const xzPlaneGeometry = new PlaneGeometry({
       vertexFormat: MaterialAppearance.MaterialSupport.TEXTURED.vertexFormat,
     })
@@ -649,8 +649,8 @@ export class Gizmo {
       modelMatrix: xzPlaneModelMatrix,
     })
 
-    // YZ Plane (for X axis manipulation) - positioned at Y and Z intersection
-    // Rotate 90 degrees around Y axis to align with YZ plane
+    // YZ 平面 (用于 X 轴操作) - 位于 Y 和 Z 的交汇处
+    // 绕 Y 轴旋转 90 度以对齐 YZ 平面
     const yzPlaneGeometry = new PlaneGeometry({
       vertexFormat: MaterialAppearance.MaterialSupport.TEXTURED.vertexFormat,
     })
@@ -704,7 +704,7 @@ export class Gizmo {
       asynchronous: false,
     })
 
-    // Store plane primitives in both translate and scale
+    // 将平面图元存储在平移和缩放组件中
     transPrimitive._part.push(xyPlanePrimitive, xzPlanePrimitive, yzPlanePrimitive)
     scalePrimitive._part.push(xyPlanePrimitive, xzPlanePrimitive, yzPlanePrimitive)
   }
@@ -718,7 +718,7 @@ export class Gizmo {
     if (!this.autoSyncMountedPrimitive || !this._mountedPrimitive)
       return
 
-    // Keep gizmo aligned with the current mounted primitive (entity or primitive)
+    // 保持 Gizmo 与当前挂载的图元（Entity 或 Primitive）对齐
     const mounted = this._mountedPrimitive as MountedVirtualPrimitive
     if (mounted._isEntity) {
       const entity = this.resolveMountedEntity(mounted)
@@ -847,107 +847,120 @@ export class Gizmo {
    */
   mountToPrimitive(primitive: any, viewer?: Viewer | null) {
     if (!primitive || !primitive.modelMatrix) {
-      console.error('Primitive must have modelMatrix')
+      console.error('Primitive must have modelMatrix') // Primitive 必须具有 modelMatrix 属性
       return
     }
 
     const currentViewer = viewer || this._viewer
     if (!currentViewer) {
-      console.error('Viewer is required')
+      console.error('Viewer is required') // 必须提供 Viewer
       return
     }
 
-    // 直接使用 primitive 的 modelMatrix
     this._mountedPrimitive = primitive
-    Matrix4.clone(primitive.modelMatrix, this.modelMatrix)
     this.autoSyncMountedPrimitive = true
+
+    // 从 primitive.modelMatrix 中提取位置和纯旋转，移除缩放分量以避免 Gizmo 变形
+    const position = Matrix4.getTranslation(primitive.modelMatrix, new Cartesian3())
+    const rotationWithScale = Matrix4.getMatrix3(primitive.modelMatrix, new Matrix3())
+
+    // 归一化每个列向量以移除 scale
+    const col0 = new Cartesian3(rotationWithScale[0], rotationWithScale[1], rotationWithScale[2])
+    const col1 = new Cartesian3(rotationWithScale[3], rotationWithScale[4], rotationWithScale[5])
+    const col2 = new Cartesian3(rotationWithScale[6], rotationWithScale[7], rotationWithScale[8])
+
+    Cartesian3.normalize(col0, col0)
+    Cartesian3.normalize(col1, col1)
+    Cartesian3.normalize(col2, col2)
+
+    const pureRotation = new Matrix3(
+      col0.x, col1.x, col2.x,
+      col0.y, col1.y, col2.y,
+      col0.z, col1.z, col2.z
+    )
+
+    // 构建不含缩放的 Gizmo 矩阵
+    const gizmoMatrix = Matrix4.fromRotationTranslation(pureRotation, position, new Matrix4())
+    Matrix4.clone(gizmoMatrix, this.modelMatrix)
   }
 
   /**
    * 挂载到 Model 的子节点（ModelNode）
-   * 
+   *
    * 使用 Cesium 内部的 sceneGraph 流程计算节点世界坐标
    * 完整公式：worldMatrix = modelMatrix × components.transform × axisCorrectionMatrix × transformToRoot × transform
-   * 
+   *
    * 参考：
    * - ModelSceneGraph.js: computedModelMatrix 的计算
    * - ModelRuntimeNode.js: computedTransform 的定义
    * - ModelUtility.js: getAxisCorrectionMatrix
-   * 
+   *
    * @param node - ModelNode 对象
    * @param model - 节点所属的 Model 对象
    * @param viewer - Viewer 实例
    */
   mountToNode(node: any, model: any, viewer?: Viewer | null) {
     if (!node) {
-      console.error('Node is required')
+      console.error('Node is required') // 必须提供 Node
       return
     }
 
     if (!model || !model.modelMatrix) {
-      console.error('Model must have modelMatrix property')
+      console.error('Model must have modelMatrix property') // Model 必须具有 modelMatrix 属性
       return
     }
 
     const currentViewer = viewer || this._viewer
     if (!currentViewer) {
-      console.error('Viewer is required')
+      console.error('Viewer is required') // 必须提供 Viewer
       return
     }
 
     // 获取节点的 runtimeNode
     const runtimeNode = (node as any)._runtimeNode
     if (!runtimeNode) {
-      console.error('Cannot access _runtimeNode')
+      console.error('Cannot access _runtimeNode') // 无法访问 _runtimeNode
       return
     }
 
     // 获取模型的 sceneGraph
     const sceneGraph = (model as any)._sceneGraph
     if (!sceneGraph) {
-      console.error('Cannot access _sceneGraph')
+      console.error('Cannot access _sceneGraph') // 无法访问 _sceneGraph
       return
     }
 
     // 1. 获取各种变换矩阵
     // 1.1 节点的局部变换（相对于父节点）
     const nodeTransform = runtimeNode.transform || Matrix4.IDENTITY
-    // console.log('① transform (节点局部):', nodeTransform)
 
     // 1.2 到根节点的累积变换
     const transformToRoot = runtimeNode.transformToRoot || Matrix4.IDENTITY
-    // console.log('② transformToRoot (祖先累积):', transformToRoot)
 
     // 1.3 轴校正矩阵 - 尝试从 sceneGraph 获取，否则手动计算
     let axisCorrectionMatrix: Matrix4
     if (sceneGraph.axisCorrectionMatrix) {
       axisCorrectionMatrix = sceneGraph.axisCorrectionMatrix
-      // console.log('③ axisCorrectionMatrix (from sceneGraph):', axisCorrectionMatrix)
     } else {
       // 从 components 获取 upAxis 和 forwardAxis
       const components = sceneGraph.components
       const Axis = (CesiumInternal as any).Axis
       const upAxis = components?.upAxis ?? Axis.Y  // 默认 Y-up (glTF 标准)
       const forwardAxis = components?.forwardAxis ?? Axis.X  // 默认 X-forward
-      // console.log('   upAxis:', upAxis, '(0=X, 1=Y, 2=Z)')
-      // console.log('   forwardAxis:', forwardAxis)
       axisCorrectionMatrix = (CesiumInternal as any).ModelUtility.getAxisCorrectionMatrix(upAxis, forwardAxis)
-      // console.log('③ axisCorrectionMatrix (computed):', axisCorrectionMatrix)
     }
 
     // 1.4 组件变换（模型级别）
     const componentsTransform = sceneGraph.components?.transform || Matrix4.IDENTITY
-    // console.log('④ components.transform:', componentsTransform)
 
     // 1.5 模型矩阵（世界空间位置和方向）
     const modelMatrix = model.modelMatrix
-    // console.log('⑤ modelMatrix:', modelMatrix)
 
     // 1.6 模型缩放
     const modelScale = (model as any).scale ?? 1
-    // console.log('⑥ model.scale:', modelScale)
 
     // 2. 按照公式计算世界矩阵
+    // 2. 按照公式计算世界矩阵 (用于位置和物理旋转)
     // worldMatrix = modelMatrix × components.transform × axisCorrectionMatrix × transformToRoot × transform
 
     // Step 1: transformToRoot × transform
@@ -958,7 +971,7 @@ export class Gizmo {
 
     // Step 3: components.transform × step2
     const step3 = Matrix4.multiply(componentsTransform, step2, new Matrix4())
-
+    
     // Step 4: 应用 scale（如果有）
     let step4: Matrix4
     if (modelScale !== 1) {
@@ -968,32 +981,57 @@ export class Gizmo {
       step4 = step3
     }
 
-    // Step 5: modelMatrix × step4 = 最终世界矩阵
+    // Step 5: modelMatrix × step4 = 最终世界矩阵 (物理正确，包含 axisCorrection)
     const nodeWorldMatrix = Matrix4.multiply(modelMatrix, step4, new Matrix4())
 
     // 获取节点世界位置
     const nodeWorldPosition = Matrix4.getTranslation(nodeWorldMatrix, new Cartesian3())
-    // console.log('Node world position:', nodeWorldPosition)
-
-    // 提取模型的旋转（用于 gizmo 的朝向）
-    const modelRotation = Matrix4.getMatrix3(model.modelMatrix, new Matrix3())
-
-    // 归一化旋转矩阵（移除可能的缩放影响）
-    const col0 = new Cartesian3(modelRotation[0], modelRotation[1], modelRotation[2])
-    const col1 = new Cartesian3(modelRotation[3], modelRotation[4], modelRotation[5])
-    const col2 = new Cartesian3(modelRotation[6], modelRotation[7], modelRotation[8])
-    Cartesian3.normalize(col0, col0)
-    Cartesian3.normalize(col1, col1)
-    Cartesian3.normalize(col2, col2)
-    const normalizedRotation = new Matrix3(
-      col0.x, col1.x, col2.x,
-      col0.y, col1.y, col2.y,
-      col0.z, col1.z, col2.z
+    
+    // --- 计算 Visual Offset (关键逻辑) ---
+    // 目标：Gizmo 初始显示时，旋转轴应与根模型一致 (Blue Up)，这也是用户预期的 "Normal" 状态。
+    // 但是节点的物理矩阵 (nodeWorldMatrix) 可能是 Green Up (Y-up with Correction)。
+    // 我们计算一个 offset 矩阵，使得 nodeWorldMatrix * offset = visualGizmoMatrix
+    
+    // 1. 物理旋转矩阵 (从 nodeWorldMatrix 提取，去除位移/缩放)
+    const physRotationMatrix = Matrix4.getMatrix3(nodeWorldMatrix, new Matrix3())
+    // 归一化
+    const pCol0 = new Cartesian3(physRotationMatrix[0], physRotationMatrix[1], physRotationMatrix[2])
+    const pCol1 = new Cartesian3(physRotationMatrix[3], physRotationMatrix[4], physRotationMatrix[5])
+    const pCol2 = new Cartesian3(physRotationMatrix[6], physRotationMatrix[7], physRotationMatrix[8])
+    Cartesian3.normalize(pCol0, pCol0)
+    Cartesian3.normalize(pCol1, pCol1)
+    Cartesian3.normalize(pCol2, pCol2)
+    const physRotationPure = new Matrix3(
+        pCol0.x, pCol1.x, pCol2.x,
+        pCol0.y, pCol1.y, pCol2.y,
+        pCol0.z, pCol1.z, pCol2.z
     )
+    const physMatrixPure = Matrix4.fromRotationTranslation(physRotationPure, Cartesian3.ZERO, new Matrix4())
 
-    // 构建 gizmo 的 modelMatrix（位置 + 旋转，不含 scale）
+    // 2. 视觉目标旋转矩阵 (使用 model.modelMatrix 的旋转，即 Root-aligned)
+    const visualRotationMatrix = Matrix4.getMatrix3(model.modelMatrix, new Matrix3())
+    // 归一化
+    const vCol0 = new Cartesian3(visualRotationMatrix[0], visualRotationMatrix[1], visualRotationMatrix[2])
+    const vCol1 = new Cartesian3(visualRotationMatrix[3], visualRotationMatrix[4], visualRotationMatrix[5])
+    const vCol2 = new Cartesian3(visualRotationMatrix[6], visualRotationMatrix[7], visualRotationMatrix[8])
+    Cartesian3.normalize(vCol0, vCol0)
+    Cartesian3.normalize(vCol1, vCol1)
+    Cartesian3.normalize(vCol2, vCol2)
+    const visualRotationPure = new Matrix3(
+        vCol0.x, vCol1.x, vCol2.x,
+        vCol0.y, vCol1.y, vCol2.y,
+        vCol0.z, vCol1.z, vCol2.z
+    )
+    const visualMatrixPure = Matrix4.fromRotationTranslation(visualRotationPure, Cartesian3.ZERO, new Matrix4())
+
+    // 3. 计算 Offset: Offset = Inverse(Physical) * Visual
+    const inversePhys = Matrix4.inverse(physMatrixPure, new Matrix4())
+    const visualOffset = Matrix4.multiply(inversePhys, visualMatrixPure, new Matrix4())
+
+    // 4. 构建初始 Gizmo Matrix (Position=Node, Rotation=Visual)
+    // 实际上这就是 nodeWorldMatrix * offset (在仅旋转意义上)
     const gizmoMatrix = Matrix4.fromRotationTranslation(
-      normalizedRotation,
+      visualRotationPure,
       nodeWorldPosition,
       new Matrix4()
     )
@@ -1004,9 +1042,10 @@ export class Gizmo {
       _isNode: true,
       _node: node,
       _model: model,
-      _axisCorrectionMatrix: axisCorrectionMatrix, // 保存修正矩阵供后续使用
-      _sceneGraph: sceneGraph, // 保存 sceneGraph 供后续使用
-      _scale: 1, // 节点的局部缩放值，初始为 1
+      _axisCorrectionMatrix: axisCorrectionMatrix,
+      _sceneGraph: sceneGraph,
+      _scale: 1,
+      _visualOffset: visualOffset, // 保存偏移矩阵
     }
 
     // 挂载
@@ -1046,7 +1085,7 @@ export class Gizmo {
     }
 
     this.setMode(GizmoMode.translate)
-    this.transMode = TranslateMode.local
+    this.coordinateMode = CoordinateMode.local
     addPointerEventHandler(this._viewer, this)
   }
 
@@ -1098,7 +1137,7 @@ export class Gizmo {
     this._transPrimitives._show = false
     this._rotatePrimitives._show = false
     this._scalePrimitives._show = false
-    
+
     if (mode === GizmoMode.translate) {
       this.mode = GizmoMode.translate
       if (this._transPrimitives) {
@@ -1157,16 +1196,16 @@ export class Gizmo {
       return
     }
 
-    // Hide all helper lines first
+    // 先隐藏所有辅助线
     for (let i = 0; i < currentPrimitives._helper.length; i++) {
       currentPrimitives._helper[i].show = false
     }
 
-    // Support array of axis IDs for plane operations
+    // 支持传入数组格式的轴 ID
     const axisIds = Array.isArray(axisId) ? axisId : [axisId]
 
     for (const id of axisIds) {
-      // Show specific helper line
+      // 显示特定的辅助线
       if (id === GizmoPart.xAxis) {
         currentPrimitives._helper[0].show = true
       }
@@ -1220,7 +1259,6 @@ export class Gizmo {
       if (found) {
         // 更新引用
         mounted._entity = found
-        console.log('Gizmo: Entity 已重新定位（通过自定义属性）', found)
         return found
       }
     }

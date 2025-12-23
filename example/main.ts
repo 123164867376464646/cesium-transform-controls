@@ -1,7 +1,6 @@
 import * as Cesium from 'cesium'
-import { Gizmo, GizmoMode, TranslateMode } from '../src/index'
+import { CoordinateMode, Gizmo, GizmoMode } from '../src/index'
 
-// 声明全局 dat 对象
 declare const dat: any
 
 const viewer = new Cesium.Viewer('cesiumContainer', {
@@ -15,58 +14,28 @@ const viewer = new Cesium.Viewer('cesiumContainer', {
   infoBox: false,
 })
 
-// 基础位置（用于物体排列）
-const baseLon = 106.580810
-const baseLat = 29.557070
-const baseHeight = 100
-const spacing = 0//0.002 // 经度间隔约200米
+const baseLon = 106.58446188
+const baseLat = 29.57088337
+const baseHeight = 0
 
-// // 加载3D模型 (Model Primitive)
-// const model = await Cesium.Model.fromGltfAsync({
-//   url: 'https://raw.githubusercontent.com/CesiumGS/cesium/main/Apps/SampleData/models/CesiumMilkTruck/CesiumMilkTruck.glb',
-//   modelMatrix: Cesium.Transforms.headingPitchRollToFixedFrame(
-//     Cesium.Cartesian3.fromDegrees(baseLon, baseLat, baseHeight),
-//     new Cesium.HeadingPitchRoll(0, 0, 0),
-//   ),
-//   debugShowBoundingVolume: false,
-//   scale: 10,
-// })
-// viewer.scene.primitives.add(model)
-
-// // Entity Box
-// const boxEntity = viewer.entities.add({
-//   name: 'Test Box Entity',
-//   position: Cesium.Cartesian3.fromDegrees(baseLon + spacing, baseLat, baseHeight),
-//   box: {
-//     dimensions: new Cesium.Cartesian3(50, 50, 80),
-//     material: Cesium.Color.RED.withAlpha(0.8),
-//     outline: true,
-//     outlineColor: Cesium.Color.WHITE,
-//   },
-// })
-
-// 3D Model
 const model = await Cesium.Model.fromGltfAsync({
-  // url: 'https://raw.githubusercontent.com/CesiumGS/cesium/main/Apps/SampleData/models/CesiumBalloon/CesiumBalloon.glb',
   url: 'luaz.glb',
   modelMatrix: Cesium.Transforms.headingPitchRollToFixedFrame(
     Cesium.Cartesian3.fromDegrees(baseLon, baseLat, baseHeight),
     new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(0), Cesium.Math.toRadians(0), Cesium.Math.toRadians(0)),
   ),
   scale: 10,
-  // upAxis:0 //使用X轴为上测试
+  // upAxis: 0 // 测试：使用 X 轴向上
 })
 viewer.scene.primitives.add(model)
 
 model.readyEvent.addEventListener(() => {
-  console.log('Model:', model)
-  const nodeName = 'wheel_FR_luaz_diffuse_0'
-  // const nodeName = 'mesh_0_4'
+  // const nodeName = 'wheel_FR_luaz_diffuse_0' //轮胎
+  const nodeName = 'door_R_luaz_diffuse_0' //车门
   const node = model.getNode(nodeName)
-  console.log('Node:', node)
 
   // gizmo.mountToPrimitive(model, viewer)
-  gizmo.mountToNode(node, model, viewer)
+  gizmo.mountToNode(node, model, viewer) //手动绑定子节点
 
   // 挂载完成后初始化显示位置
   updateCoordinatesFromMatrix(gizmo._mountedPrimitive)
@@ -76,37 +45,23 @@ model.readyEvent.addEventListener(() => {
     viewer.camera.flyToBoundingSphere(boundingSphere, {
       duration: 0,
       offset: new Cesium.HeadingPitchRange(
-        Cesium.Math.toRadians(-90),
-        Cesium.Math.toRadians(-0),
-        boundingSphere.radius * 4
+        Cesium.Math.toRadians(-45),
+        Cesium.Math.toRadians(-15),
+        boundingSphere.radius * 3
       ),
     })
   }, 1000)
 })
 
-// 创建变换控制器
 const gizmo = new Gizmo({
   onGizmoPointerMove: (event: any) => {
     updateCoordinatesFromMatrix(gizmo._mountedPrimitive)
   },
 })
 gizmo.attach(viewer)
-;(window as any).gizmo = gizmo
 
-// 设置相机视角
-const modelPosition = Cesium.Cartesian3.fromDegrees(106.580810, 29.557070, 100)
-const offset = new Cesium.HeadingPitchRange(
-  Cesium.Math.toRadians(-20),
-  Cesium.Math.toRadians(-20),
-  1000
-)
-
-viewer.camera.lookAt(modelPosition, offset)
-viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY)
-
-// 使用 dat.gui 创建控制面板
 const settings = {
-  transformMode: 'rotate',
+  transformMode: 'translate',
   translateMode: 'local',
   enabled: true,
   // 经纬度显示
@@ -122,13 +77,14 @@ const settings = {
   scaleY: '1.00',
   scaleZ: '1.00',
 }
+gizmo.setMode(settings.transformMode as GizmoMode)
+gizmo.coordinateMode = CoordinateMode.local
 
 const gui = new dat.GUI({ name: '变换控制器' })
 
-// 先声明变量
 let translateModeController: any
+let savedCoordinateMode: string = 'local'
 
-// 变换模式选择（放在最上面）
 gui.add(settings, 'transformMode', ['translate', 'rotate', 'scale']).name('transformMode').onChange((value: string) => {
   switch (value) {
     case 'translate':
@@ -141,28 +97,35 @@ gui.add(settings, 'transformMode', ['translate', 'rotate', 'scale']).name('trans
       gizmo.setMode(GizmoMode.scale)
       break
   }
+  // 当 scale 模式时，禁用 coordinateMode 控制器（缩放只支持局部坐标系）
+  if (value === 'scale') {
+    savedCoordinateMode = settings.translateMode
+    gizmo.coordinateMode = CoordinateMode.local
+    translateModeController.domElement.style.pointerEvents = 'none'
+    translateModeController.domElement.style.opacity = '0.5'
+  } else {
+    translateModeController.domElement.style.pointerEvents = 'auto'
+    translateModeController.domElement.style.opacity = '1'
+    settings.translateMode = savedCoordinateMode
+    gizmo.coordinateMode = savedCoordinateMode === 'surface' ? CoordinateMode.surface : CoordinateMode.local
+    translateModeController.updateDisplay()
+  }
 })
 
-// 平移坐标系选择（仅在平移模式下显示）
-translateModeController = gui.add(settings, 'translateMode', ['local', 'surface']).name('translateMode').onChange((value: string) => {
+translateModeController = gui.add(settings, 'translateMode', ['local', 'surface']).name('coordinateMode').onChange((value: string) => {
   switch (value) {
     case 'local':
-      gizmo.transMode = TranslateMode.local
+      gizmo.coordinateMode = CoordinateMode.local
       break
     case 'surface':
-      gizmo.transMode = TranslateMode.surface
+      gizmo.coordinateMode = CoordinateMode.surface
       break
   }
 })
 
-// 启用/禁用控制
 gui.add(settings, 'enabled').name('enabled').onChange((value: boolean) => {
   gizmo.setEnabled(value)
 })
-
-// 初始化为旋转模式
-gizmo.setMode(settings.transformMode as GizmoMode)
-gizmo.transMode = TranslateMode.local
 
 // 拾取信息显示 GUI（顺序：名称、类型、经纬度、高度）
 const coordsFolder = gui.addFolder('信息')
@@ -184,21 +147,11 @@ const rotateZController = coordsFolder.add(settings, 'rotateZ').name('旋转 Z (
 const scaleXController = coordsFolder.add(settings, 'scaleX').name('缩放 X').listen()
 const scaleYController = coordsFolder.add(settings, 'scaleY').name('缩放 Y').listen()
 const scaleZController = coordsFolder.add(settings, 'scaleZ').name('缩放 Z').listen()
-coordsFolder.close()
+coordsFolder.open()
 
 // 禁用输入框编辑
 nameController.domElement.style.pointerEvents = 'none'
 typeController.domElement.style.pointerEvents = 'none'
-
-// lonController.domElement.style.pointerEvents = 'none'
-// latController.domElement.style.pointerEvents = 'none'
-// heightController.domElement.style.pointerEvents = 'none'
-// rotateXController.domElement.style.pointerEvents = 'none'
-// rotateYController.domElement.style.pointerEvents = 'none'
-// rotateZController.domElement.style.pointerEvents = 'none'
-// scaleXController.domElement.style.pointerEvents = 'none'
-// scaleYController.domElement.style.pointerEvents = 'none'
-// scaleZController.domElement.style.pointerEvents = 'none'
 
 // 从 Gizmo 挂载的 primitive 获取模型类型
 function getMountedObjectType(mounted: any): string {
@@ -273,6 +226,7 @@ function getMountedObjectName(mounted: any): string {
 }
 
 // 更新挂载模型信息到 GUI（复用 Gizmo 内部的 _show 状态）
+// 仅更新了名称、类型用于测试
 function updateMountedObjectInfo() {
   const mounted = (gizmo as any)._mountedPrimitive
   // 检查任意模式的 Gizmo 是否可见（平移/旋转/缩放）
@@ -298,7 +252,7 @@ viewer.scene.preRender.addEventListener(updateMountedObjectInfo)
 // 初始化显示当前挂载的模型信息
 updateMountedObjectInfo()
 
-//当前显示只是用于简单测试并不严谨,若需要获取坐标情况还得根据真实的业务情况来获取,后续尽量通过回调,将gizmo当前绑定物体暴露出来,用户自信获取其坐标(世界/局部)/旋转/缩放等信息
+// 当前显示仅用于测试。真实业务场景中，应通过回调获取 Gizmo 绑定的对象，并根据其类型（Entity/Model/Tileset）准确获取世界/局部坐标、旋转和缩放信息。
 function updateCoordinatesFromMatrix(model: any) {
   const position = Cesium.Matrix4.getTranslation(model.modelMatrix, new Cesium.Cartesian3())
   const cartographic = Cesium.Cartographic.fromCartesian(position)
@@ -322,25 +276,112 @@ function updateCoordinatesFromMatrix(model: any) {
   const latitude = Cesium.Math.toDegrees(cartographic.latitude)
   const height = cartographic.height
 
-  settings.longitude = longitude.toFixed(6)
-  settings.latitude = latitude.toFixed(6)
+  settings.longitude = longitude.toFixed(8)
+  settings.latitude = latitude.toFixed(8)
   settings.height = height.toFixed(2)
 
-  // 提取旋转分量（相对于模型位置的局部 HeadingPitchRoll）
-  const hpr = Cesium.Transforms.fixedFrameToHeadingPitchRoll(model.modelMatrix)
-  // 转换为度数显示（Heading=Z轴旋转, Pitch=Y轴旋转, Roll=X轴旋转）
-  settings.rotateX = Cesium.Math.toDegrees(hpr.roll).toFixed(2)
-  settings.rotateY = Cesium.Math.toDegrees(hpr.pitch).toFixed(2)
-  settings.rotateZ = Cesium.Math.toDegrees(hpr.heading).toFixed(2)
+  // 提取旋转分量
+  if (model._isNode && model._node) {
+    const node = model._node
+    let mat = node.matrix
+    if (!mat && node._runtimeNode && node._runtimeNode.transform) {
+      mat = node._runtimeNode.transform
+    }
+    if (!mat) {
+       mat = Cesium.Matrix4.IDENTITY
+    }
+
+    // 提取 Rotation Matrix (去掉 Scale)
+    const m3 = new Cesium.Matrix3()
+    Cesium.Matrix4.getMatrix3(mat, m3)
+
+    // 归一化以移除缩放影响
+    const c0 = Cesium.Cartesian3.fromElements(m3[0], m3[1], m3[2])
+    const c1 = Cesium.Cartesian3.fromElements(m3[3], m3[4], m3[5])
+    const c2 = Cesium.Cartesian3.fromElements(m3[6], m3[7], m3[8])
+    Cesium.Cartesian3.normalize(c0, c0)
+    Cesium.Cartesian3.normalize(c1, c1)
+    Cesium.Cartesian3.normalize(c2, c2)
+
+    // 重组纯旋转矩阵
+    const r00 = c0.x; const r01 = c1.x; const r02 = c2.x;
+    const r10 = c0.y; const r11 = c1.y; const r12 = c2.y;
+    const r20 = c0.z; const r21 = c1.z; const r22 = c2.z;
+
+    // 分解 Euler Angles (Sequence: Z -> Y -> X,  R = Mz * My * Mx)
+    // Y = -asin(R20)
+    // X = atan2(R21, R22)
+    // Z = atan2(R10, R00)
+
+    let x = 0, y = 0, z = 0
+    if (Math.abs(r20) < 0.99999) {
+      y = Math.asin(-r20)
+      x = Math.atan2(r21, r22)
+      z = Math.atan2(r10, r00)
+    } else {
+      // Gimbal Lock
+      y = Math.PI / 2 * Math.sign(-r20)
+      z = 0
+      x = Math.atan2(-r12, r11)
+    }
+
+    settings.rotateX = Cesium.Math.toDegrees(x).toFixed(2)
+    settings.rotateY = Cesium.Math.toDegrees(y).toFixed(2)
+    settings.rotateZ = Cesium.Math.toDegrees(z).toFixed(2)
+
+  } else {
+    // 对于 Root Model，使用 Cesium 提供的 ENU 转换
+    // 转换为度数显示（Heading=Z轴旋转, Pitch=Y轴旋转, Roll=X轴旋转）
+    const hpr = Cesium.Transforms.fixedFrameToHeadingPitchRoll(model.modelMatrix)
+    settings.rotateX = Cesium.Math.toDegrees(hpr.roll).toFixed(2)
+    settings.rotateY = Cesium.Math.toDegrees(hpr.pitch).toFixed(2)
+    settings.rotateZ = Cesium.Math.toDegrees(hpr.heading).toFixed(2)
+  }
 
   // 提取缩放分量
-  const scale = model._scale
-  settings.scaleX = scale.toFixed(2)
-  settings.scaleY = scale.toFixed(2)
-  settings.scaleZ = scale.toFixed(2)
+  // 无论是 Node 还是 Model，Gizmo 缩放操作都会更新对应的 Matrix (node.matrix 或 model.modelMatrix)
+  // 因此统一从 Matrix 中提取缩放最为准确
+  let targetMatrix = Cesium.Matrix4.IDENTITY
+  if (model._isNode && model._node) {
+      const node = model._node
+      if (node.matrix) {
+          targetMatrix = node.matrix
+      } else if (node._runtimeNode && node._runtimeNode.transform) {
+          targetMatrix = node._runtimeNode.transform
+      }
+  } else {
+      // Root Model
+      targetMatrix = model.modelMatrix
+  }
+
+  const scale = Cesium.Matrix4.getScale(targetMatrix, new Cesium.Cartesian3())
+  
+  // 对于 Root Model，还需要乘以 model.scale (uniform independent scale)
+  // Total Scale = model.scale * matrix_scale
+  let uniformScale = 1.0
+  if (!model._isNode && typeof model.scale === 'number') {
+      uniformScale = model.scale
+  }
+  
+  settings.scaleX = (scale.x * uniformScale).toFixed(2)
+  settings.scaleY = (scale.y * uniformScale).toFixed(2)
+  settings.scaleZ = (scale.z * uniformScale).toFixed(2)
 }
 
 window.addEventListener('beforeunload', () => {
   gizmo.detach()
   viewer.destroy()
+})
+
+function toGlobal(attrs: Record<string, any>) {
+  for (const [key, value] of Object.entries(attrs)) {
+    (window as any)[key] = value
+  }
+}
+
+toGlobal({
+  Cesium,
+  viewer,
+  model,
+  gizmo,
 })
