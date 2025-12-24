@@ -4,6 +4,7 @@
   "description": "Interactive transform controls (translate, rotate, scale) for Cesium entities and primitives",
   "main": "./dist/cesium-transform-controls.umd.js",
   "module": "./dist/cesium-transform-controls.es.js",
+  "unpkg": "./dist/cesium-transform-controls.es.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {

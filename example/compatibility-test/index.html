@@ -177,6 +177,14 @@
         </div>
         
         <div class="control-row">
+            <label>模块格式</label>
+            <select id="moduleFormat">
+                <option value="umd">UMD (传统)</option>
+                <option value="esm">ESM (ES Modules)</option>
+            </select>
+        </div>
+        
+        <div class="control-row">
             <button id="switchVersion">🔄 切换版本并刷新</button>
         </div>
         
@@ -227,18 +235,23 @@
 
     <!-- 动态加载脚本 -->
     <script>
-        // 从 URL 参数获取版本，默认 1.135.0
+        // 从 URL 参数获取版本和模块格式
         const urlParams = new URLSearchParams(window.location.search);
         let cesiumVersion = urlParams.get('v') || '1.135.0';
+        let moduleFormat = urlParams.get('format') || 'umd';
         
         // 更新下拉框选中项
         document.getElementById('versionSelect').value = cesiumVersion;
+        document.getElementById('moduleFormat').value = moduleFormat;
         
         // 辅助函数：动态加载脚本
-        function loadScript(src) {
+        function loadScript(src, isModule = false) {
             return new Promise((resolve, reject) => {
                 const script = document.createElement('script');
                 script.src = src;
+                if (isModule) {
+                    script.type = 'module';
+                }
                 script.onload = resolve;
                 script.onerror = reject;
                 document.head.appendChild(script);
@@ -253,33 +266,71 @@
             document.head.appendChild(link);
         }
         
-        // CDN 列表（按优先级排序）
-        const cdnList = [
-            `https://unpkg.com/cesium@${cesiumVersion}/Build/Cesium/Cesium.js`,
+        // 辅助函数：动态注入 Import Map（ESM 模式需要）
+        function injectImportMap(version) {
+            const importMap = {
+                imports: {
+                    "cesium": `https://cdn.jsdelivr.net/npm/cesium@${version}/+esm`
+                }
+            };
+            const script = document.createElement('script');
+            script.type = 'importmap';
+            script.textContent = JSON.stringify(importMap);
+            document.head.appendChild(script);
+        }
+        
+        // 如果是 ESM 模式，提前注入 Import Map
+        if (moduleFormat === 'esm') {
+            injectImportMap(cesiumVersion);
+        }
+        
+        // UMD CDN 列表（按优先级排序）
+        const umdCdnList = [
             `https://cdn.jsdelivr.net/npm/cesium@${cesiumVersion}/Build/Cesium/Cesium.js`,
+            `https://unpkg.com/cesium@${cesiumVersion}/Build/Cesium/Cesium.js`,
             `https://cesium.com/downloads/cesiumjs/releases/${cesiumVersion}/Build/Cesium/Cesium.js`,
         ];
         
+        // ESM CDN 列表
+        const esmCdnList = [
+            `https://cdn.jsdelivr.net/npm/cesium@${cesiumVersion}/+esm`,
+        ];
+        
         const cssCdnList = [
-            `https://unpkg.com/cesium@${cesiumVersion}/Build/Cesium/Widgets/widgets.css`,
             `https://cdn.jsdelivr.net/npm/cesium@${cesiumVersion}/Build/Cesium/Widgets/widgets.css`,
+            `https://unpkg.com/cesium@${cesiumVersion}/Build/Cesium/Widgets/widgets.css`,
             `https://cesium.com/downloads/cesiumjs/releases/${cesiumVersion}/Build/Cesium/Widgets/widgets.css`,
         ];
         
         // 按顺序加载所有依赖
         async function loadDependencies() {
             const statusEl = document.getElementById('status');
+            const formatLabel = moduleFormat === 'esm' ? 'ESM' : 'UMD';
             
             // 1. 加载 Cesium CSS
             loadCSS(cssCdnList[0]);
             
-            // 2. 尝试从不同 CDN 加载 Cesium
+            if (moduleFormat === 'esm') {
+                // ESM 加载方式
+                await loadDependenciesESM(statusEl, formatLabel);
+            } else {
+                // UMD 加载方式
+                await loadDependenciesUMD(statusEl, formatLabel);
+            }
+            
+            // 初始化应用
+            await initApp();
+        }
+        
+        // UMD 加载方式
+        async function loadDependenciesUMD(statusEl, formatLabel) {
+            // 尝试从不同 CDN 加载 Cesium
             let cesiumLoaded = false;
-            for (const cdn of cdnList) {
+            for (const cdn of umdCdnList) {
                 try {
-                    statusEl.textContent = `正在从 CDN 加载 Cesium ${cesiumVersion}...`;
+                    statusEl.textContent = `[${formatLabel}] 正在从 CDN 加载 Cesium ${cesiumVersion}...`;
                     await loadScript(cdn);
-                    console.log('Cesium loaded from:', cdn);
+                    console.log('Cesium loaded (UMD) from:', cdn);
                     cesiumLoaded = true;
                     break;
                 } catch (e) {
@@ -291,24 +342,66 @@
                 throw new Error(`无法加载 Cesium ${cesiumVersion}，所有 CDN 都失败`);
             }
             
-            // 3. 确保 Cesium 加载成功后，再加载 Gizmo UMD
-            statusEl.textContent = '正在加载 CesiumTransformControls...';
+            // 加载 Gizmo UMD
+            statusEl.textContent = `[${formatLabel}] 正在加载 CesiumTransformControls...`;
             await loadScript('../../dist/cesium-transform-controls.umd.js');
-            console.log('CesiumTransformControls loaded');
+            console.log('CesiumTransformControls loaded (UMD)');
             
-            // 4. 验证加载结果
+            // 验证加载结果
             if (typeof CesiumTransformControls === 'undefined' || !CesiumTransformControls.Gizmo) {
                 throw new Error('CesiumTransformControls 加载失败或结构不正确');
             }
-            
-            // 5. 初始化应用
-            await initApp();
         }
         
-        // 切换版本
+        // ESM 加载方式
+        async function loadDependenciesESM(statusEl, formatLabel) {
+            statusEl.textContent = `[${formatLabel}] 正在从 CDN 加载 Cesium ${cesiumVersion}...`;
+            
+            try {
+                // 使用动态 import 加载 ESM 版本的 Cesium
+                const esmUrl = esmCdnList[0];
+                console.log('Loading Cesium ESM from:', esmUrl);
+                
+                const CesiumModule = await import(esmUrl);
+                
+                // ESM 导入后，将 Cesium 挂载到全局
+                window.Cesium = CesiumModule.default || CesiumModule;
+                
+                // 设置 CESIUM_BASE_URL（ESM 版本需要手动设置）
+                window.CESIUM_BASE_URL = `https://cdn.jsdelivr.net/npm/cesium@${cesiumVersion}/Build/Cesium/`;
+                
+                console.log('Cesium loaded (ESM), version:', window.Cesium.VERSION);
+                
+            } catch (e) {
+                console.error('ESM load error:', e);
+                throw new Error(`ESM 加载 Cesium ${cesiumVersion} 失败: ${e.message}`);
+            }
+            
+            // 加载 Gizmo ESM
+            statusEl.textContent = `[${formatLabel}] 正在加载 CesiumTransformControls...`;
+            try {
+                const GizmoModule = await import('../../dist/cesium-transform-controls.es.js');
+                
+                // 将导出挂载到全局
+                window.CesiumTransformControls = GizmoModule;
+                console.log('CesiumTransformControls loaded (ESM)');
+                
+            } catch (e) {
+                console.error('Gizmo ESM load error:', e);
+                throw new Error(`ESM 加载 CesiumTransformControls 失败: ${e.message}`);
+            }
+            
+            // 验证加载结果
+            if (!window.CesiumTransformControls || !window.CesiumTransformControls.Gizmo) {
+                throw new Error('CesiumTransformControls 加载失败或结构不正确');
+            }
+        }
+        
+        // 切换版本/格式
         document.getElementById('switchVersion').onclick = () => {
             const newVersion = document.getElementById('versionSelect').value;
-            window.location.href = `?v=${newVersion}`;
+            const newFormat = document.getElementById('moduleFormat').value;
+            window.location.href = `?v=${newVersion}&format=${newFormat}`;
         };
         
         // 启动加载流程
@@ -360,7 +453,7 @@
                 
                 // 加载模型
                 model = await Cesium.Model.fromGltfAsync({
-                    url: '../luaz.glb',
+                    url: '../public/luaz.glb',
                     modelMatrix: Cesium.Transforms.headingPitchRollToFixedFrame(
                         Cesium.Cartesian3.fromDegrees(baseLon, baseLat, baseHeight),
                         new Cesium.HeadingPitchRoll(0, 0, 0)
@@ -424,7 +517,8 @@
                 viewer.scene.preRender.addEventListener(updateInfo);
                 
                 document.getElementById('status').className = 'status success';
-                document.getElementById('status').textContent = `✅ Cesium ${cesiumVersion} + Gizmo 加载成功!`;
+                const formatLabel = moduleFormat === 'esm' ? 'ESM' : 'UMD';
+                document.getElementById('status').textContent = `✅ [${formatLabel}] Cesium ${cesiumVersion} + Gizmo 加载成功!`;
                 
                 // 导出到全局便于调试
                 window.viewer = viewer;
