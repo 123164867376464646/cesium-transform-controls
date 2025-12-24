@@ -104,6 +104,13 @@ gizmo.mountToEntity(entity, viewer)
 gizmo.mountToNode(node, model, viewer)
 ```
 
+> [!WARNING]
+> **关于模型子节点的获取**
+>
+> 与 Three.js 不同（Three.js 加载 glTF 后直接生成 Mesh 树，可直接拾取任意 Mesh），Cesium 为了性能优化，默认将 glTF 视为一个整体图元（`Primitive`）。
+>
+> **若需要控制子节点，必须在建模阶段（如 Blender）确保部件是独立的 Object/Node，切勿将网格合并（Merge/Join）。** 只有保留了独立的节点层级，Cesium 才能通过 `model.getNode()` 识别并操作它们。
+
 ### 方式二：鼠标点击选中
 
 Gizmo 内置了鼠标点击选中功能，点击场景中的对象即可自动挂载：
