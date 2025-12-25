@@ -838,6 +838,11 @@ export class Gizmo {
     Matrix4.clone(transform, this.modelMatrix)
     this.autoSyncMountedPrimitive = true
     this._lastSyncedPosition = position.clone()
+
+    // 挂载完成后刷新显示状态
+    if (this.mode) {
+      this.setMode(this.mode)
+    }
   }
 
   /**
@@ -882,6 +887,11 @@ export class Gizmo {
     // 构建不含缩放的 Gizmo 矩阵
     const gizmoMatrix = Matrix4.fromRotationTranslation(pureRotation, position, new Matrix4())
     Matrix4.clone(gizmoMatrix, this.modelMatrix)
+
+    // 挂载完成后刷新显示状态
+    if (this.mode) {
+      this.setMode(this.mode)
+    }
   }
 
   /**
@@ -1052,6 +1062,11 @@ export class Gizmo {
     this._mountedPrimitive = nodeWrapper as any
     Matrix4.clone(gizmoMatrix, this.modelMatrix)
     this.autoSyncMountedPrimitive = false
+
+    // 挂载完成后刷新显示状态
+    if (this.mode) {
+      this.setMode(this.mode)
+    }
   }
 
 
@@ -1134,45 +1149,30 @@ export class Gizmo {
   setMode(mode: GizmoMode) {
     if (!this._transPrimitives || !this._rotatePrimitives || !this._scalePrimitives)
       return
+
+    // 先隐藏所有模式的 primitives
     this._transPrimitives._show = false
     this._rotatePrimitives._show = false
     this._scalePrimitives._show = false
 
+    // 更新当前模式
+    this.mode = mode
+
+    // 如果没有挂载对象，则保持所有 primitives 隐藏状态
+    // 这样可以避免在点击空白区域后调用 setMode 导致 gizmo 意外显示
+    if (!this._mountedPrimitive) {
+      return
+    }
+
+    // 根据模式显示对应的 primitives
     if (mode === GizmoMode.translate) {
-      this.mode = GizmoMode.translate
-      if (this._transPrimitives) {
-        this._transPrimitives._show = true
-      }
-      if (this._rotatePrimitives) {
-        this._rotatePrimitives._show = false
-      }
-      if (this._scalePrimitives) {
-        this._scalePrimitives._show = false
-      }
+      this._transPrimitives._show = true
     }
     else if (mode === GizmoMode.rotate) {
-      this.mode = GizmoMode.rotate
-      if (this._transPrimitives) {
-        this._transPrimitives._show = false
-      }
-      if (this._rotatePrimitives) {
-        this._rotatePrimitives._show = true
-      }
-      if (this._scalePrimitives) {
-        this._scalePrimitives._show = false
-      }
+      this._rotatePrimitives._show = true
     }
     else if (mode === GizmoMode.scale) {
-      this.mode = GizmoMode.scale
-      if (this._transPrimitives) {
-        this._transPrimitives._show = false
-      }
-      if (this._rotatePrimitives) {
-        this._rotatePrimitives._show = false
-      }
-      if (this._scalePrimitives) {
-        this._scalePrimitives._show = true
-      }
+      this._scalePrimitives._show = true
     }
   }
 

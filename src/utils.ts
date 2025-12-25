@@ -166,7 +166,10 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
       }
     }
     else {
-      // 点击空白处 隐藏gizmo（所有模式）
+      // 点击空白处：取消选中并隐藏 gizmo（所有模式）
+      // 清除挂载对象，表示没有选中任何物体
+      gizmo._mountedPrimitive = null
+      gizmo._lastSyncedPosition = null
       if (gizmo._transPrimitives) {
         gizmo._transPrimitives._show = false
       }
