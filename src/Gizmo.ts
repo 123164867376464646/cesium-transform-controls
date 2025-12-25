@@ -2,8 +2,10 @@ import type { Entity, Viewer } from 'cesium'
 import * as CesiumInternal from 'cesium'
 import {
   ArcType,
+  AxisAlignedBoundingBox,
   BlendingState,
   BoxGeometry,
+  BoxOutlineGeometry,
   Cartesian3,
   Math as CesiumMath,
   Color,
@@ -68,6 +70,11 @@ interface GizmoOptions {
   onGizmoPointerDown?: (event: PointerEvent) => void
   onGizmoPointerUp?: (event: PointerEvent) => void
   onGizmoPointerMove?: (event: PointerEvent) => void
+  // 包围盒显示选项
+  showLocalBounds?: boolean // 显示模型空间边界，默认 false
+  showWorldAABB?: boolean // 显示世界空间AABB，默认 false
+  localBoundsColor?: Color // LocalBounds 颜色，默认 ORANGE
+  worldAABBColor?: Color // WorldAABB 颜色，默认 CYAN
 }
 
 export class Gizmo {
@@ -97,6 +104,14 @@ export class Gizmo {
   _isInteracting: boolean
   _lastSyncedPosition: Cartesian3 | null
   _enabled: boolean
+  // === 包围盒相关属性 ===
+  _showLocalBounds: boolean
+  _showWorldAABB: boolean
+  _localBoundsColor: Color
+  _worldAABBColor: Color
+  _localBoundsPrimitive: Primitive | null
+  _worldAABBPrimitive: Primitive | null
+  _currentBounds: { min: Cartesian3, max: Cartesian3 } | null
 
   constructor(options?: GizmoOptions) {
     options = options || {}
@@ -151,6 +166,15 @@ export class Gizmo {
     this._isInteracting = false
     this._lastSyncedPosition = null
     this._enabled = true
+
+    // 包围盒初始化
+    this._showLocalBounds = options.showLocalBounds ?? false
+    this._showWorldAABB = options.showWorldAABB ?? false
+    this._localBoundsColor = options.localBoundsColor ?? Color.ORANGE
+    this._worldAABBColor = options.worldAABBColor ?? Color.CYAN
+    this._localBoundsPrimitive = null
+    this._worldAABBPrimitive = null
+    this._currentBounds = null
 
     this.createGizmoPrimitive()
   }
@@ -892,6 +916,11 @@ export class Gizmo {
     if (this.mode) {
       this.setMode(this.mode)
     }
+
+    // 更新包围盒显示
+    if (this._showLocalBounds || this._showWorldAABB) {
+      this._updateBoundingBoxes()
+    }
   }
 
   /**
@@ -1067,6 +1096,11 @@ export class Gizmo {
     if (this.mode) {
       this.setMode(this.mode)
     }
+
+    // 更新包围盒显示
+    if (this._showLocalBounds || this._showWorldAABB) {
+      this._updateBoundingBoxes()
+    }
   }
 
 
@@ -1134,6 +1168,10 @@ export class Gizmo {
     if (this._scalePrimitives) {
       this._viewer.scene.primitives.remove(this._scalePrimitives)
     }
+
+    // 清除包围盒
+    this._clearBoundingBoxes()
+
     this._viewer = null
     removePointerEventHandler()
   }
@@ -1264,6 +1302,466 @@ export class Gizmo {
     }
 
     return mounted._entity
+  }
+
+  // === 包围盒相关方法 ===
+
+  /**
+   * 获取模型的 glTF JSON 数据
+   */
+  private _getGltfJson(model: any): any {
+    let gltf = model._gltf
+    if (!gltf && model.loader && model.loader._gltfJsonLoader) gltf = model.loader._gltfJsonLoader._gltf
+    if (!gltf && model._loader && model._loader._gltfJsonLoader) gltf = model._loader._gltfJsonLoader._gltf
+    if (!gltf && model.loader) gltf = model.loader._gltfJson
+    if (!gltf && model._loader) gltf = model._loader._gltfJson
+    if (!gltf && model._sceneGraph) gltf = model._sceneGraph._components?.gltfJson || model._sceneGraph._gltfJson
+    return gltf
+  }
+
+  /**
+   * 从 glTF 模型计算模型空间边界
+   * 遍历所有节点和 mesh，从 accessor 的 min/max 获取精确边界
+   * 应用完整变换链：components.transform × axisCorrectionMatrix × nodeTransform
+   * @param model - Cesium Model 对象
+   * @returns { min, max } 或 null（模型空间边界，需要用 modelMatrix 变换到世界空间）
+   */
+  private _getModelBounds(model: any): { min: Cartesian3, max: Cartesian3 } | null {
+    try {
+      const gltf = this._getGltfJson(model)
+      if (!gltf || !gltf.nodes) {
+        console.warn('无法获取 glTF 数据')
+        return null
+      }
+
+      // 获取 sceneGraph 以读取 axisCorrectionMatrix 和 components.transform
+      const sceneGraph = model._sceneGraph
+      let axisCorrectionMatrix = Matrix4.IDENTITY
+      let componentsTransform = Matrix4.IDENTITY
+
+      if (sceneGraph) {
+        // 获取轴校正矩阵
+        if (sceneGraph.axisCorrectionMatrix) {
+          axisCorrectionMatrix = sceneGraph.axisCorrectionMatrix
+        }
+        else if (sceneGraph.components) {
+          const components = sceneGraph.components
+          const Axis = (CesiumInternal as any).Axis
+          const upAxis = components?.upAxis ?? Axis.Y
+          const forwardAxis = components?.forwardAxis ?? Axis.X
+          axisCorrectionMatrix = (CesiumInternal as any).ModelUtility.getAxisCorrectionMatrix(upAxis, forwardAxis)
+        }
+
+        // 获取组件变换
+        if (sceneGraph.components?.transform) {
+          componentsTransform = sceneGraph.components.transform
+        }
+      }
+
+      // 获取模型缩放
+      const modelScale = model.scale ?? 1
+
+      let globalMin = new Cartesian3(Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE)
+      let globalMax = new Cartesian3(-Number.MAX_VALUE, -Number.MAX_VALUE, -Number.MAX_VALUE)
+      let foundAny = false
+
+      // 递归遍历节点
+      const traverseNodes = (nodeIndex: number, parentMatrix: Matrix4) => {
+        const node = gltf.nodes[nodeIndex]
+
+        // 计算当前节点的局部矩阵
+        let localMatrix = Matrix4.clone(Matrix4.IDENTITY, new Matrix4())
+        if (node.matrix) {
+          localMatrix = Matrix4.fromArray(node.matrix)
+        }
+        else {
+          const translation = node.translation
+            ? new Cartesian3(node.translation[0], node.translation[1], node.translation[2])
+            : Cartesian3.ZERO
+          const rotation = node.rotation
+            ? new (CesiumInternal as any).Quaternion(node.rotation[0], node.rotation[1], node.rotation[2], node.rotation[3])
+            : (CesiumInternal as any).Quaternion.IDENTITY
+          const scale = node.scale
+            ? new Cartesian3(node.scale[0], node.scale[1], node.scale[2])
+            : new Cartesian3(1, 1, 1)
+
+          localMatrix = Matrix4.fromTranslationQuaternionRotationScale(translation, rotation, scale)
+        }
+
+        // 组合父级矩阵：parentMatrix × localMatrix
+        const nodeGlobalMatrix = Matrix4.multiply(parentMatrix, localMatrix, new Matrix4())
+
+        // 处理该节点下的 Mesh
+        if (node.mesh !== undefined) {
+          const mesh = gltf.meshes[node.mesh]
+          if (mesh.primitives) {
+            for (const primitive of mesh.primitives) {
+              const attr = primitive.attributes
+              if (attr.POSITION !== undefined) {
+                const accessor = gltf.accessors[attr.POSITION]
+                if (accessor.min && accessor.max) {
+                  // 原始包围盒的 8 个顶点
+                  const aMin = accessor.min
+                  const aMax = accessor.max
+                  const corners = [
+                    new Cartesian3(aMin[0], aMin[1], aMin[2]),
+                    new Cartesian3(aMin[0], aMin[1], aMax[2]),
+                    new Cartesian3(aMin[0], aMax[1], aMin[2]),
+                    new Cartesian3(aMin[0], aMax[1], aMax[2]),
+                    new Cartesian3(aMax[0], aMin[1], aMin[2]),
+                    new Cartesian3(aMax[0], aMin[1], aMax[2]),
+                    new Cartesian3(aMax[0], aMax[1], aMin[2]),
+                    new Cartesian3(aMax[0], aMax[1], aMax[2]),
+                  ]
+
+                  // 完整变换：components.transform × axisCorrectionMatrix × nodeGlobalMatrix × pt
+                  // Step 1: axisCorrectionMatrix × nodeGlobalMatrix
+                  const step1 = Matrix4.multiply(axisCorrectionMatrix, nodeGlobalMatrix, new Matrix4())
+                  // Step 2: componentsTransform × step1
+                  const step2 = Matrix4.multiply(componentsTransform, step1, new Matrix4())
+                  // Step 3: 应用 model.scale
+                  let finalTransform: Matrix4
+                  if (modelScale !== 1) {
+                    const scaleMatrix = Matrix4.fromUniformScale(modelScale)
+                    finalTransform = Matrix4.multiply(scaleMatrix, step2, new Matrix4())
+                  }
+                  else {
+                    finalTransform = step2
+                  }
+
+                  // 将这 8 个顶点变换到模型空间
+                  for (const pt of corners) {
+                    const transformedPt = Matrix4.multiplyByPoint(finalTransform, pt, new Cartesian3())
+                    globalMin.x = Math.min(globalMin.x, transformedPt.x)
+                    globalMin.y = Math.min(globalMin.y, transformedPt.y)
+                    globalMin.z = Math.min(globalMin.z, transformedPt.z)
+                    globalMax.x = Math.max(globalMax.x, transformedPt.x)
+                    globalMax.y = Math.max(globalMax.y, transformedPt.y)
+                    globalMax.z = Math.max(globalMax.z, transformedPt.z)
+                  }
+                  foundAny = true
+                }
+              }
+            }
+          }
+        }
+
+        // 递归子节点
+        if (node.children) {
+          for (const childIndex of node.children) {
+            traverseNodes(childIndex, nodeGlobalMatrix)
+          }
+        }
+      }
+
+      // 从场景根节点开始遍历
+      const scene = gltf.scenes ? gltf.scenes[gltf.scene || 0] : null
+      if (scene && scene.nodes) {
+        for (const nodeIndex of scene.nodes) {
+          traverseNodes(nodeIndex, Matrix4.IDENTITY)
+        }
+      }
+      else if (gltf.nodes) {
+        for (let i = 0; i < gltf.nodes.length; i++) {
+          traverseNodes(i, Matrix4.IDENTITY)
+        }
+      }
+
+      if (!foundAny) return null
+      return { min: globalMin, max: globalMax }
+    }
+    catch (e) {
+      console.warn('Failed to get model bounds:', e)
+    }
+    return null
+  }
+
+  /**
+   * 从子节点计算边界（只包含该节点的 mesh 原始边界）
+   * 注意：返回的是节点 mesh 的原始边界（不做任何变换），
+   * 因为渲染时会使用 mounted.modelMatrix 进行完整世界变换
+   * @param node - ModelNode 对象
+   * @param model - 节点所属的 Model
+   * @returns { min, max } 或 null
+   */
+  private _getNodeBounds(node: any, model: any): { min: Cartesian3, max: Cartesian3 } | null {
+    try {
+      const gltf = this._getGltfJson(model)
+      if (!gltf || !gltf.nodes) {
+        return this._getModelBounds(model)
+      }
+
+      // 尝试通过节点名称找到对应的 glTF 节点索引
+      const nodeName = node.name
+      let nodeIndex = -1
+      for (let i = 0; i < gltf.nodes.length; i++) {
+        if (gltf.nodes[i].name === nodeName) {
+          nodeIndex = i
+          break
+        }
+      }
+
+      if (nodeIndex === -1 || gltf.nodes[nodeIndex].mesh === undefined) {
+        return this._getModelBounds(model)
+      }
+
+      const gltfNode = gltf.nodes[nodeIndex]
+      const mesh = gltf.meshes[gltfNode.mesh]
+      if (!mesh || !mesh.primitives) {
+        return this._getModelBounds(model)
+      }
+
+      let nodeMin = new Cartesian3(Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE)
+      let nodeMax = new Cartesian3(-Number.MAX_VALUE, -Number.MAX_VALUE, -Number.MAX_VALUE)
+      let foundAny = false
+
+      // 只读取原始 accessor 边界，不做任何变换
+      // mounted.modelMatrix 会在渲染时进行完整世界变换
+      for (const primitive of mesh.primitives) {
+        const attr = primitive.attributes
+        if (attr.POSITION !== undefined) {
+          const accessor = gltf.accessors[attr.POSITION]
+          if (accessor.min && accessor.max) {
+            const aMin = accessor.min
+            const aMax = accessor.max
+
+            // 直接使用原始边界角点
+            nodeMin.x = Math.min(nodeMin.x, aMin[0])
+            nodeMin.y = Math.min(nodeMin.y, aMin[1])
+            nodeMin.z = Math.min(nodeMin.z, aMin[2])
+            nodeMax.x = Math.max(nodeMax.x, aMax[0])
+            nodeMax.y = Math.max(nodeMax.y, aMax[1])
+            nodeMax.z = Math.max(nodeMax.z, aMax[2])
+            foundAny = true
+          }
+        }
+      }
+
+      if (!foundAny) {
+        return this._getModelBounds(model)
+      }
+
+      return { min: nodeMin, max: nodeMax }
+    }
+    catch (e) {
+      console.warn('Failed to get node bounds:', e)
+      return this._getModelBounds(model)
+    }
+  }
+
+  /**
+   * 创建 LocalBounds Primitive（模型空间边界，跟随旋转）
+   */
+  private _createLocalBoundsPrimitive(bounds: { min: Cartesian3, max: Cartesian3 }, modelMatrix: Matrix4): Primitive {
+    const aabb = new AxisAlignedBoundingBox(bounds.min, bounds.max)
+    const geometry = BoxOutlineGeometry.fromAxisAlignedBoundingBox(aabb)
+
+    const instance = new GeometryInstance({
+      geometry,
+      modelMatrix, // 跟随物体旋转
+      attributes: {
+        color: ColorGeometryInstanceAttribute.fromColor(this._localBoundsColor.withAlpha(0.99)),
+      },
+    })
+
+    return new Primitive({
+      geometryInstances: instance,
+      appearance: new PerInstanceColorAppearance({
+        flat: true,
+        translucent: true,
+        renderState: {
+          depthTest: { enabled: false },
+          depthMask: false,
+          blending: BlendingState.ALPHA_BLEND,
+        },
+      }),
+      asynchronous: false,
+    })
+  }
+
+  /**
+   * 创建 WorldAABB Primitive（世界空间边界，轴对齐）
+   */
+  private _createWorldAABBPrimitive(bounds: { min: Cartesian3, max: Cartesian3 }, modelMatrix: Matrix4): Primitive {
+    // 先变换8个角点到世界坐标，再计算世界空间的 AABB
+    const corners = [
+      new Cartesian3(bounds.min.x, bounds.min.y, bounds.min.z),
+      new Cartesian3(bounds.max.x, bounds.min.y, bounds.min.z),
+      new Cartesian3(bounds.min.x, bounds.max.y, bounds.min.z),
+      new Cartesian3(bounds.max.x, bounds.max.y, bounds.min.z),
+      new Cartesian3(bounds.min.x, bounds.min.y, bounds.max.z),
+      new Cartesian3(bounds.max.x, bounds.min.y, bounds.max.z),
+      new Cartesian3(bounds.min.x, bounds.max.y, bounds.max.z),
+      new Cartesian3(bounds.max.x, bounds.max.y, bounds.max.z),
+    ]
+
+    const worldCorners = corners.map(c => Matrix4.multiplyByPoint(modelMatrix, c, new Cartesian3()))
+    const worldAABB = AxisAlignedBoundingBox.fromPoints(worldCorners)
+
+    const geometry = BoxOutlineGeometry.fromAxisAlignedBoundingBox(worldAABB)
+
+    const instance = new GeometryInstance({
+      geometry,
+      modelMatrix: Matrix4.IDENTITY, // 已经是世界坐标
+      attributes: {
+        color: ColorGeometryInstanceAttribute.fromColor(this._worldAABBColor.withAlpha(0.99)),
+      },
+    })
+
+    return new Primitive({
+      geometryInstances: instance,
+      appearance: new PerInstanceColorAppearance({
+        flat: true,
+        translucent: true,
+        renderState: {
+          depthTest: { enabled: false },
+          depthMask: false,
+          blending: BlendingState.ALPHA_BLEND,
+        },
+      }),
+      asynchronous: false,
+    })
+  }
+
+  /**
+   * 更新并渲染包围盒（内部方法）
+   * 根据 _showLocalBounds 和 _showWorldAABB 开关决定渲染内容
+   */
+  _updateBoundingBoxes(): void {
+    if (!this._viewer || !this._mountedPrimitive) {
+      return
+    }
+
+    // 先清除旧的包围盒
+    this._clearBoundingBoxes()
+
+    // 如果都不显示，直接返回
+    if (!this._showLocalBounds && !this._showWorldAABB) {
+      return
+    }
+
+    const mounted = this._mountedPrimitive as MountedVirtualPrimitive
+
+    let bounds: { min: Cartesian3, max: Cartesian3 } | null = null
+    let modelMatrix: Matrix4
+
+    if (mounted._isNode && mounted._node && mounted._model) {
+      // 子节点：获取原始边界并使用完整的物理世界矩阵
+      bounds = this._getNodeBounds(mounted._node, mounted._model)
+
+      // 使用完整公式计算物理世界矩阵：
+      // worldMatrix = modelMatrix × components.transform × axisCorrectionMatrix × transformToRoot × transform
+      const node = mounted._node
+      const model = mounted._model
+      const runtimeNode = node._runtimeNode
+      const sceneGraph = model._sceneGraph
+
+      const nodeTransform = runtimeNode?.transform || node.matrix || Matrix4.IDENTITY
+      const transformToRoot = runtimeNode?.transformToRoot || Matrix4.IDENTITY
+
+      // 获取轴校正矩阵
+      let axisCorrectionMatrix = Matrix4.IDENTITY
+      if (sceneGraph?.axisCorrectionMatrix) {
+        axisCorrectionMatrix = sceneGraph.axisCorrectionMatrix
+      }
+      else if (sceneGraph?.components) {
+        const components = sceneGraph.components
+        const Axis = (CesiumInternal as any).Axis
+        const upAxis = components?.upAxis ?? Axis.Y
+        const forwardAxis = components?.forwardAxis ?? Axis.X
+        axisCorrectionMatrix = (CesiumInternal as any).ModelUtility.getAxisCorrectionMatrix(upAxis, forwardAxis)
+      }
+
+      const componentsTransform = sceneGraph?.components?.transform || Matrix4.IDENTITY
+      const modelScale = model.scale ?? 1
+
+      // Step 1: transformToRoot × transform
+      const step1 = Matrix4.multiply(transformToRoot, nodeTransform, new Matrix4())
+      // Step 2: axisCorrectionMatrix × step1
+      const step2 = Matrix4.multiply(axisCorrectionMatrix, step1, new Matrix4())
+      // Step 3: components.transform × step2
+      const step3 = Matrix4.multiply(componentsTransform, step2, new Matrix4())
+      // Step 4: 应用 scale
+      let step4: Matrix4
+      if (modelScale !== 1) {
+        const scaleMatrix = Matrix4.fromUniformScale(modelScale)
+        step4 = Matrix4.multiply(scaleMatrix, step3, new Matrix4())
+      }
+      else {
+        step4 = step3
+      }
+      // Step 5: modelMatrix × step4 = 最终世界矩阵
+      modelMatrix = Matrix4.multiply(model.modelMatrix, step4, new Matrix4())
+    }
+    else if (mounted._isEntity) {
+      // Entity 类型暂不支持包围盒（需要知道实际的几何体）
+      return
+    }
+    else {
+      // 普通 Model
+      const model = this._mountedPrimitive as any
+      bounds = this._getModelBounds(model)
+      modelMatrix = model.modelMatrix
+    }
+
+    if (!bounds) {
+      return
+    }
+
+    // 缓存当前边界数据
+    this._currentBounds = bounds
+
+    // 创建 LocalBounds
+    if (this._showLocalBounds) {
+      this._localBoundsPrimitive = this._createLocalBoundsPrimitive(bounds, modelMatrix)
+      this._viewer.scene.primitives.add(this._localBoundsPrimitive)
+    }
+
+    // 创建 WorldAABB
+    if (this._showWorldAABB) {
+      this._worldAABBPrimitive = this._createWorldAABBPrimitive(bounds, modelMatrix)
+      this._viewer.scene.primitives.add(this._worldAABBPrimitive)
+    }
+  }
+
+  /**
+   * 清除所有包围盒 Primitive
+   */
+  _clearBoundingBoxes(): void {
+    if (this._viewer) {
+      if (this._localBoundsPrimitive) {
+        this._viewer.scene.primitives.remove(this._localBoundsPrimitive)
+        this._localBoundsPrimitive = null
+      }
+      if (this._worldAABBPrimitive) {
+        this._viewer.scene.primitives.remove(this._worldAABBPrimitive)
+        this._worldAABBPrimitive = null
+      }
+    }
+    this._currentBounds = null
+  }
+
+  /**
+   * 设置 LocalBounds 显示状态
+   */
+  setShowLocalBounds(show: boolean): void {
+    this._showLocalBounds = show
+    this._updateBoundingBoxes()
+  }
+
+  /**
+   * 设置 WorldAABB 显示状态
+   */
+  setShowWorldAABB(show: boolean): void {
+    this._showWorldAABB = show
+    this._updateBoundingBoxes()
+  }
+
+  /**
+   * 获取当前边界数据（只读）
+   */
+  get currentBounds(): { min: Cartesian3, max: Cartesian3 } | null {
+    return this._currentBounds
   }
 
   /**

@@ -19,7 +19,7 @@ const baseLat = 29.57088337
 const baseHeight = 0
 
 const model = await Cesium.Model.fromGltfAsync({
-  url: './luaz.glb',  
+  url: './luaz.glb',
   modelMatrix: Cesium.Transforms.headingPitchRollToFixedFrame(
     Cesium.Cartesian3.fromDegrees(baseLon, baseLat, baseHeight),
     new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(0), Cesium.Math.toRadians(0), Cesium.Math.toRadians(0)),
@@ -53,17 +53,12 @@ model.readyEvent.addEventListener(() => {
   }, 1000)
 })
 
-const gizmo = new Gizmo({
-  onGizmoPointerMove: (event: any) => {
-    updateCoordinatesFromMatrix(gizmo._mountedPrimitive)
-  },
-})
-gizmo.attach(viewer)
-
 const settings = {
   transformMode: 'translate',
   translateMode: 'local',
   enabled: true,
+  showLocalBounds: true,
+  showWorldAABB: false,
   // 经纬度显示
   longitude: '0.000000',
   latitude: '0.000000',
@@ -77,6 +72,15 @@ const settings = {
   scaleY: '1.00',
   scaleZ: '1.00',
 }
+
+const gizmo = new Gizmo({
+  showLocalBounds: settings.showLocalBounds,
+  showWorldAABB: settings.showWorldAABB,
+  onGizmoPointerMove: (event: any) => {
+    updateCoordinatesFromMatrix(gizmo._mountedPrimitive)
+  },
+})
+gizmo.attach(viewer)
 gizmo.setMode(settings.transformMode as GizmoMode)
 gizmo.coordinateMode = CoordinateMode.local
 
@@ -113,6 +117,7 @@ gui.add(settings, 'transformMode', ['translate', 'rotate', 'scale']).name('trans
 })
 
 translateModeController = gui.add(settings, 'translateMode', ['local', 'surface']).name('coordinateMode').onChange((value: string) => {
+  savedCoordinateMode = value // 保持 savedCoordinateMode 同步，避免切换 transformMode 时丢失
   switch (value) {
     case 'local':
       gizmo.coordinateMode = CoordinateMode.local
@@ -125,6 +130,14 @@ translateModeController = gui.add(settings, 'translateMode', ['local', 'surface'
 
 gui.add(settings, 'enabled').name('enabled').onChange((value: boolean) => {
   gizmo.setEnabled(value)
+})
+
+// 包围盒显隐控制
+gui.add(settings, 'showLocalBounds').name('LocalBounds').onChange((value: boolean) => {
+  gizmo.setShowLocalBounds(value)
+})
+gui.add(settings, 'showWorldAABB').name('WorldAABB').onChange((value: boolean) => {
+  gizmo.setShowWorldAABB(value)
 })
 
 // 拾取信息显示 GUI（顺序：名称、类型、经纬度、高度）
@@ -288,7 +301,7 @@ function updateCoordinatesFromMatrix(model: any) {
       mat = node._runtimeNode.transform
     }
     if (!mat) {
-       mat = Cesium.Matrix4.IDENTITY
+      mat = Cesium.Matrix4.IDENTITY
     }
 
     // 提取 Rotation Matrix (去掉 Scale)
@@ -343,26 +356,26 @@ function updateCoordinatesFromMatrix(model: any) {
   // 因此统一从 Matrix 中提取缩放最为准确
   let targetMatrix = Cesium.Matrix4.IDENTITY
   if (model._isNode && model._node) {
-      const node = model._node
-      if (node.matrix) {
-          targetMatrix = node.matrix
-      } else if (node._runtimeNode && node._runtimeNode.transform) {
-          targetMatrix = node._runtimeNode.transform
-      }
+    const node = model._node
+    if (node.matrix) {
+      targetMatrix = node.matrix
+    } else if (node._runtimeNode && node._runtimeNode.transform) {
+      targetMatrix = node._runtimeNode.transform
+    }
   } else {
-      // Root Model
-      targetMatrix = model.modelMatrix
+    // Root Model
+    targetMatrix = model.modelMatrix
   }
 
   const scale = Cesium.Matrix4.getScale(targetMatrix, new Cesium.Cartesian3())
-  
+
   // 对于 Root Model，还需要乘以 model.scale (uniform independent scale)
   // Total Scale = model.scale * matrix_scale
   let uniformScale = 1.0
   if (!model._isNode && typeof model.scale === 'number') {
-      uniformScale = model.scale
+    uniformScale = model.scale
   }
-  
+
   settings.scaleX = (scale.x * uniformScale).toFixed(2)
   settings.scaleY = (scale.y * uniformScale).toFixed(2)
   settings.scaleZ = (scale.z * uniformScale).toFixed(2)

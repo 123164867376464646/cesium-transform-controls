@@ -9,7 +9,11 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    "paths": {
+      "cesium-transform-controls": ["../src/index.ts"]
+    },
+    "baseUrl": "./"
   },
   "include": ["*.ts", "../src/**/*"]
 }

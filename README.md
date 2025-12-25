@@ -25,9 +25,9 @@ Cesium 3D 变换控制器，为 Cesium 实体和模型提供可视化的平移�
 - **Entity 平移**
   - 支持所有平移模式
 
-### ⏳ 待扩展
-
-- [ ] 包围盒OBB/AABB
+- **包围盒可视化**
+  - LocalBounds
+  - WorldAABB
 
 ## 环境要求
 

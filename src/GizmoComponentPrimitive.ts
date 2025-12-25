@@ -29,6 +29,8 @@ export class GizmoComponentPrimitive {
 
     // 当挂载的图元位置发生外部变化时，同步 Gizmo 位置
     this._gizmo.updateModelMatrixFromMountedPrimitive()
+    // 持续更新包围盒（交互过程中和非交互状态都需要）
+    this._gizmo._updateBoundingBoxes()
 
     // 修正 Gizmo 的屏幕尺寸
     this._scale = getScaleForMinimumSize(this._gizmo, frameState)
