@@ -34,9 +34,44 @@ fi
 
 echo -e "${GREEN}📦 开始发布流程...${NC}"
 
+# 获取当前 npm 源
+ORIGINAL_REGISTRY=$(npm config get registry)
+
+# 如果当前不是官方源，先临时切换到官方源检查登录状态
+if [ "$ORIGINAL_REGISTRY" != "$NPM_OFFICIAL_REGISTRY" ]; then
+    npm config set registry $NPM_OFFICIAL_REGISTRY --silent
+fi
+
+# 检查 npm 登录状态
+echo -e "\n${GREEN}🔐 检查 npm 登录状态...${NC}"
+NPM_USER=$(npm whoami 2>/dev/null) || NPM_USER=""
+
+if [ -z "$NPM_USER" ]; then
+    echo -e "${YELLOW}⚠️  未登录 npm，正在启动登录流程...${NC}"
+    npm login
+    
+    # 再次检查是否登录成功
+    NPM_USER=$(npm whoami 2>/dev/null) || NPM_USER=""
+    if [ -z "$NPM_USER" ]; then
+        echo -e "${RED}❌ npm 登录失败，请手动运行 'npm login' 后重试${NC}"
+        # 切回原来的源
+        if [ "$ORIGINAL_REGISTRY" != "$NPM_OFFICIAL_REGISTRY" ]; then
+            npm config set registry $ORIGINAL_REGISTRY --silent
+        fi
+        exit 1
+    fi
+fi
+
+echo -e "${GREEN}✅ 已登录为: ${YELLOW}$NPM_USER${NC}"
+
+# 切回原来的源（构建阶段可以用镜像源加速）
+if [ "$ORIGINAL_REGISTRY" != "$NPM_OFFICIAL_REGISTRY" ]; then
+    npm config set registry $ORIGINAL_REGISTRY --silent
+fi
+
 # 获取当前版本 (使用 npm pkg get，去掉引号)
 CURRENT_VERSION=$(npm pkg get version | tr -d '"')
-echo -e "当前版本: ${YELLOW}$CURRENT_VERSION${NC}"
+echo -e "\n当前版本: ${YELLOW}$CURRENT_VERSION${NC}"
 
 # 构建项目
 echo -e "\n${GREEN}📦 构建项目...${NC}"
