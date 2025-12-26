@@ -108,6 +108,53 @@ const scratchRotateScale = new Cartesian3()
 const scratchRotateMatrix = new Matrix4()
 const scratchScaleMatrix = new Matrix4()
 
+// === 用于高频事件处理的复用变量（避免每帧分配新对象） ===
+// 位移计算相关
+const scratchTranslation = new Cartesian3()
+const scratchCurrentGizmoTranslation = new Cartesian3()
+const scratchLastGizmoTranslation = new Cartesian3()
+const scratchDeltaWorld = new Cartesian3()
+const scratchDeltaInNodeSpace = new Cartesian3()
+const scratchNewPosition = new Cartesian3()
+
+// 矩阵计算相关
+const scratchStep1 = new Matrix4()
+const scratchStep2 = new Matrix4()
+const scratchStep3 = new Matrix4()
+const scratchStep4 = new Matrix4()
+const scratchNodeWorldMatrix = new Matrix4()
+const scratchInverseNodeWorldMatrix = new Matrix4()
+const scratchTranslationMatrix = new Matrix4()
+const scratchNewNodeMatrix = new Matrix4()
+const scratchStartRotation = new Matrix3()
+const scratchStableGizmoMatrix = new Matrix4()
+const scratchNewPrimitiveMatrix = new Matrix4()
+const scratchUpdatedGizmoMatrix = new Matrix4()
+
+// Surface 模式相关
+const scratchResultPosition = new Cartesian3()
+const scratchWorldOffset = new Cartesian3()
+const scratchNewWorldPosition = new Cartesian3()
+const scratchEnuMatrix = new Matrix4()
+const scratchOldEnuMatrixInverse = new Matrix4()
+const scratchRelativeTransform = new Matrix4()
+const scratchNewEnuMatrix = new Matrix4()
+const scratchResultMatrix = new Matrix4()
+const scratchOriginalScale = new Cartesian3()
+const scratchResultWithScale = new Matrix4()
+const scratchResultCartographic = new Cartographic()
+
+// 旋转模式相关
+const scratchPureRotation = new Matrix3()
+const scratchGizmoMatrix = new Matrix4()
+const scratchRotationQuaternion = new Quaternion()
+const scratchAxisDirection = new Cartesian3()
+const scratchCol0 = new Cartesian3()
+const scratchCol1 = new Cartesian3()
+const scratchCol2 = new Cartesian3()
+const scratchPosition = new Cartesian3()
+const scratchRotationWithScale = new Matrix3()
+
 // Rotate 模式累积变量
 let rotateAccumulatedAngle = 0  // 累积旋转角度
 let rotateStartEnuMatrix = new Matrix4()  // Surface 模式起始 ENU 矩阵
@@ -156,37 +203,11 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
         }
         // 检查是否是Entity
         else if (picked.id && picked.id.position) {
-          const entity = picked.id
-          const position = entity.position.getValue(viewer.clock.currentTime)
-          if (position) {
-            // 使用Entity的位置创建变换矩阵
-            const transform = Transforms.eastNorthUpToFixedFrame(position)
-
-            // 创建一个虚拟的primitive对象来适配gizmo
-            const virtualPrimitive: VirtualPrimitive = {
-              modelMatrix: transform.clone(),
-              _isEntity: true,
-              _entity: entity,
-              _entityLocator: buildEntityLocator(entity),
-            }
-
-            // 设置gizmo的目标
-            gizmo._mountedPrimitive = virtualPrimitive as any
-            gizmo.modelMatrix = transform.clone()
-            // 重新设置当前模式，确保只显示当前模式的 primitive
-            if (gizmo.mode) {
-              gizmo.setMode(gizmo.mode)
-            }
-          }
+          gizmo.mountToEntity(picked.id, viewer)
         }
         // 检查是否是Primitive（整个模型）
         else if (picked.primitive && picked.primitive.modelMatrix instanceof Matrix4) {
-          gizmo._mountedPrimitive = picked.primitive
-          gizmo.modelMatrix = picked.primitive.modelMatrix.clone()
-          // 重新设置当前模式，确保只显示当前模式的 primitive
-          if (gizmo.mode) {
-            gizmo.setMode(gizmo.mode)
-          }
+          gizmo.mountToPrimitive(picked.primitive, viewer)
         }
       }
     }
@@ -521,14 +542,14 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
             const sceneGraph = (mountedPrimitive as any)._sceneGraph || model._sceneGraph
             const axisCorrectionMatrix = (mountedPrimitive as any)._axisCorrectionMatrix || Matrix4.IDENTITY
 
-            // 获取当前gizmo的位置
-            const currentGizmoTranslation = Matrix4.getTranslation(newMatrix, new Cartesian3())
+            // 获取当前gizmo的位置（使用 scratch 变量）
+            Matrix4.getTranslation(newMatrix, scratchCurrentGizmoTranslation)
 
             // 获取上一帧gizmo的位置（从wrapper的modelMatrix）
-            const lastGizmoTranslation = Matrix4.getTranslation(mountedPrimitive.modelMatrix, new Cartesian3())
+            Matrix4.getTranslation(mountedPrimitive.modelMatrix, scratchLastGizmoTranslation)
 
             // 计算这一帧的位移增量（世界坐标）
-            const deltaWorld = Cartesian3.subtract(currentGizmoTranslation, lastGizmoTranslation, new Cartesian3())
+            Cartesian3.subtract(scratchCurrentGizmoTranslation, scratchLastGizmoTranslation, scratchDeltaWorld)
 
             // 使用正确的公式计算节点世界矩阵（与 mountToNode 一致）
             // worldMatrix = modelMatrix × components.transform × axisCorrectionMatrix × transformToRoot × transform
@@ -538,64 +559,63 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
             const componentsTransform = sceneGraph?.components?.transform || Matrix4.IDENTITY
 
             // Step 1: transformToRoot × transform
-            const step1 = Matrix4.multiply(transformToRoot, nodeTransform, new Matrix4())
+            Matrix4.multiply(transformToRoot, nodeTransform, scratchStep1)
             // Step 2: axisCorrectionMatrix × step1
-            const step2 = Matrix4.multiply(axisCorrectionMatrix, step1, new Matrix4())
+            Matrix4.multiply(axisCorrectionMatrix, scratchStep1, scratchStep2)
             // Step 3: components.transform × step2
-            const step3 = Matrix4.multiply(componentsTransform, step2, new Matrix4())
+            Matrix4.multiply(componentsTransform, scratchStep2, scratchStep3)
             // Step 4: 应用 scale
-            let step4: Matrix4
             if (modelScale !== 1) {
               const scaleMatrix = Matrix4.fromUniformScale(modelScale)
-              step4 = Matrix4.multiply(scaleMatrix, step3, new Matrix4())
+              Matrix4.multiply(scaleMatrix, scratchStep3, scratchStep4)
             } else {
-              step4 = step3
+              Matrix4.clone(scratchStep3, scratchStep4)
             }
             // Step 5: modelMatrix × step4 = nodeWorldMatrix
-            const nodeWorldMatrix = Matrix4.multiply(model.modelMatrix, step4, new Matrix4())
+            Matrix4.multiply(model.modelMatrix, scratchStep4, scratchNodeWorldMatrix)
 
             // 将世界坐标的位移转换到节点自身坐标系
-            const inverseNodeWorldMatrix = Matrix4.inverse(nodeWorldMatrix, new Matrix4())
-            const deltaInNodeSpace = Matrix4.multiplyByPointAsVector(
-              inverseNodeWorldMatrix,
-              deltaWorld,
-              new Cartesian3()
+            Matrix4.inverse(scratchNodeWorldMatrix, scratchInverseNodeWorldMatrix)
+            Matrix4.multiplyByPointAsVector(
+              scratchInverseNodeWorldMatrix,
+              scratchDeltaWorld,
+              scratchDeltaInNodeSpace
             )
 
             // 创建节点坐标系中的平移矩阵，并应用到当前节点矩阵
-            const translationMatrix = Matrix4.fromTranslation(deltaInNodeSpace, new Matrix4())
-            const newNodeMatrix = Matrix4.multiply(
+            Matrix4.fromTranslation(scratchDeltaInNodeSpace, scratchTranslationMatrix)
+            Matrix4.multiply(
               nodeTransform,
-              translationMatrix,
-              new Matrix4()
+              scratchTranslationMatrix,
+              scratchNewNodeMatrix
             )
 
             // 更新节点矩阵
-            node.matrix = newNodeMatrix
+            node.matrix = Matrix4.clone(scratchNewNodeMatrix)
             // 如果有 runtimeNode，也需要更新
             if (runtimeNode) {
-              runtimeNode.transform = newNodeMatrix
+              runtimeNode.transform = Matrix4.clone(scratchNewNodeMatrix)
             }
 
             // 在 Translate 模式下，gizmo 的旋转应该保持不变（与拖拽开始时一致），只更新位置
             // 这样可以避免轴方向在移动过程中跳变
-            const updatedGizmoMatrix = computeNodeGizmoMatrix(mountedPrimitive, newNodeMatrix)
-            const newPosition = Matrix4.getTranslation(updatedGizmoMatrix, new Cartesian3())
+            computeNodeGizmoMatrix(mountedPrimitive, scratchNewNodeMatrix, scratchUpdatedGizmoMatrix)
+            Matrix4.getTranslation(scratchUpdatedGizmoMatrix, scratchNewPosition)
             
             // 从 gizmoStartModelMatrix 获取旋转（保持轴向稳定）
-            const startRotation = Matrix4.getMatrix3(gizmoStartModelMatrix, new Matrix3())
-            const stableGizmoMatrix = Matrix4.fromRotationTranslation(startRotation, newPosition, new Matrix4())
+            Matrix4.getMatrix3(gizmoStartModelMatrix, scratchStartRotation)
+            Matrix4.fromRotationTranslation(scratchStartRotation, scratchNewPosition, scratchStableGizmoMatrix)
 
             // 更新wrapper的modelMatrix（不含scale，gizmo显示用）
-            Matrix4.clone(stableGizmoMatrix, mountedPrimitive.modelMatrix)
+            Matrix4.clone(scratchStableGizmoMatrix, mountedPrimitive.modelMatrix)
             // 同步更新 gizmo.modelMatrix（GizmoComponentPrimitive 依赖此属性显示轴向）
-            Matrix4.clone(stableGizmoMatrix, gizmo.modelMatrix)
+            Matrix4.clone(scratchStableGizmoMatrix, gizmo.modelMatrix)
 
           }
           else if (mountedPrimitive) {
-            const newPrimitiveMatrix = Matrix4.clone(mountedPrimitive.modelMatrix, new Matrix4())
-            Matrix4.setTranslation(newPrimitiveMatrix, translation, newPrimitiveMatrix)
-            mountedPrimitive.modelMatrix = newPrimitiveMatrix
+            Matrix4.clone(mountedPrimitive.modelMatrix, scratchNewPrimitiveMatrix)
+            Matrix4.setTranslation(scratchNewPrimitiveMatrix, translation, scratchNewPrimitiveMatrix)
+            mountedPrimitive.modelMatrix = scratchNewPrimitiveMatrix
           }
         }
       }
@@ -1699,9 +1719,26 @@ function getPlaneScale(
  * 计算子节点的 gizmo 世界矩阵（位置 + 旋转，不含 scale）
  * 用于在子节点操作后正确更新 gizmo.modelMatrix
  */
+// 用于 computeNodeGizmoMatrix 的本地 scratch 变量
+const cngm_scratchStep1 = new Matrix4()
+const cngm_scratchStep2 = new Matrix4()
+const cngm_scratchStep3 = new Matrix4()
+const cngm_scratchStep4 = new Matrix4()
+const cngm_scratchNodeWorldMatrix = new Matrix4()
+const cngm_scratchPosition = new Cartesian3()
+const cngm_scratchRotationWithScale = new Matrix3()
+const cngm_scratchCol0 = new Cartesian3()
+const cngm_scratchCol1 = new Cartesian3()
+const cngm_scratchCol2 = new Cartesian3()
+const cngm_scratchPhysRotationPure = new Matrix3()
+const cngm_scratchPhysMatrixPure = new Matrix4()
+const cngm_scratchVisualMatrixPure = new Matrix4()
+const cngm_scratchVisualRotation = new Matrix3()
+
 function computeNodeGizmoMatrix(
   mountedPrimitive: any,
   newNodeMatrix: Matrix4,
+  result?: Matrix4,
 ): Matrix4 {
   const model = mountedPrimitive._model
   const runtimeNode = getRuntimeNode(mountedPrimitive._node)
@@ -1713,46 +1750,53 @@ function computeNodeGizmoMatrix(
   const componentsTransform = sceneGraph?.components?.transform || Matrix4.IDENTITY
 
   // 使用新的节点矩阵计算世界矩阵
-  const step1 = Matrix4.multiply(transformToRoot, newNodeMatrix, new Matrix4())
-  const step2 = Matrix4.multiply(axisCorrectionMatrix, step1, new Matrix4())
-  const step3 = Matrix4.multiply(componentsTransform, step2, new Matrix4())
-  let step4: Matrix4
+  Matrix4.multiply(transformToRoot, newNodeMatrix, cngm_scratchStep1)
+  Matrix4.multiply(axisCorrectionMatrix, cngm_scratchStep1, cngm_scratchStep2)
+  Matrix4.multiply(componentsTransform, cngm_scratchStep2, cngm_scratchStep3)
   if (modelScale !== 1) {
     const scaleMatrix = Matrix4.fromUniformScale(modelScale)
-    step4 = Matrix4.multiply(scaleMatrix, step3, new Matrix4())
+    Matrix4.multiply(scaleMatrix, cngm_scratchStep3, cngm_scratchStep4)
   } else {
-    step4 = step3
+    Matrix4.clone(cngm_scratchStep3, cngm_scratchStep4)
   }
-  const nodeWorldMatrix = Matrix4.multiply(model.modelMatrix, step4, new Matrix4())
+  Matrix4.multiply(model.modelMatrix, cngm_scratchStep4, cngm_scratchNodeWorldMatrix)
 
   // 获取 Visual Offset
   const visualOffset = mountedPrimitive._visualOffset || Matrix4.IDENTITY
 
   // 提取位置 (物理位置)
-  const position = Matrix4.getTranslation(nodeWorldMatrix, new Cartesian3())
+  Matrix4.getTranslation(cngm_scratchNodeWorldMatrix, cngm_scratchPosition)
   
   // 提取物理纯旋转 (Remove Scale)
-  const rotationWithScale = Matrix4.getMatrix3(nodeWorldMatrix, new Matrix3())
-  const col0 = new Cartesian3(rotationWithScale[0], rotationWithScale[1], rotationWithScale[2])
-  const col1 = new Cartesian3(rotationWithScale[3], rotationWithScale[4], rotationWithScale[5])
-  const col2 = new Cartesian3(rotationWithScale[6], rotationWithScale[7], rotationWithScale[8])
-  Cartesian3.normalize(col0, col0)
-  Cartesian3.normalize(col1, col1)
-  Cartesian3.normalize(col2, col2)
-  const physRotationPure = new Matrix3(
-    col0.x, col1.x, col2.x,
-    col0.y, col1.y, col2.y,
-    col0.z, col1.z, col2.z
-  )
-  const physMatrixPure = Matrix4.fromRotationTranslation(physRotationPure, Cartesian3.ZERO, new Matrix4())
+  Matrix4.getMatrix3(cngm_scratchNodeWorldMatrix, cngm_scratchRotationWithScale)
+  cngm_scratchCol0.x = cngm_scratchRotationWithScale[0]
+  cngm_scratchCol0.y = cngm_scratchRotationWithScale[1]
+  cngm_scratchCol0.z = cngm_scratchRotationWithScale[2]
+  cngm_scratchCol1.x = cngm_scratchRotationWithScale[3]
+  cngm_scratchCol1.y = cngm_scratchRotationWithScale[4]
+  cngm_scratchCol1.z = cngm_scratchRotationWithScale[5]
+  cngm_scratchCol2.x = cngm_scratchRotationWithScale[6]
+  cngm_scratchCol2.y = cngm_scratchRotationWithScale[7]
+  cngm_scratchCol2.z = cngm_scratchRotationWithScale[8]
+  Cartesian3.normalize(cngm_scratchCol0, cngm_scratchCol0)
+  Cartesian3.normalize(cngm_scratchCol1, cngm_scratchCol1)
+  Cartesian3.normalize(cngm_scratchCol2, cngm_scratchCol2)
+  // 使用 Matrix3.setColumn 避免 TypeScript 只读索引签名问题
+  Matrix3.setColumn(cngm_scratchPhysRotationPure, 0, cngm_scratchCol0, cngm_scratchPhysRotationPure)
+  Matrix3.setColumn(cngm_scratchPhysRotationPure, 1, cngm_scratchCol1, cngm_scratchPhysRotationPure)
+  Matrix3.setColumn(cngm_scratchPhysRotationPure, 2, cngm_scratchCol2, cngm_scratchPhysRotationPure)
+  Matrix4.fromRotationTranslation(cngm_scratchPhysRotationPure, Cartesian3.ZERO, cngm_scratchPhysMatrixPure)
 
   // 应用 Offset: Visual = Physical * Offset
   // 注意：Offset 是纯旋转矩阵，位置偏移通常为0 (因为我们在 mountToNode 是基于同一点计算的)
   // 但为了安全，我们只在旋转层面应用 offset
-  const visualMatrixPure = Matrix4.multiply(physMatrixPure, visualOffset, new Matrix4())
-  const visualRotation = Matrix4.getMatrix3(visualMatrixPure, new Matrix3())
+  Matrix4.multiply(cngm_scratchPhysMatrixPure, visualOffset, cngm_scratchVisualMatrixPure)
+  Matrix4.getMatrix3(cngm_scratchVisualMatrixPure, cngm_scratchVisualRotation)
 
-  return Matrix4.fromRotationTranslation(visualRotation, position, new Matrix4())
+  if (!result) {
+    result = new Matrix4()
+  }
+  return Matrix4.fromRotationTranslation(cngm_scratchVisualRotation, cngm_scratchPosition, result)
 }
 
 /**

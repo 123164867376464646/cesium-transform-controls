@@ -29,6 +29,14 @@ const model = await Cesium.Model.fromGltfAsync({
 })
 viewer.scene.primitives.add(model)
 
+const testEntity = viewer.entities.add({
+  position: Cesium.Cartesian3.fromDegrees(baseLon, baseLat, baseHeight),
+  point: {
+    pixelSize: 10,
+    color: Cesium.Color.RED,
+  },
+})
+
 model.readyEvent.addEventListener(() => {
   // const nodeName = 'wheel_FR_luaz_diffuse_0' //轮胎
   const nodeName = 'door_R_luaz_diffuse_0' //车门
@@ -211,8 +219,8 @@ function getMountedObjectName(mounted: any): string {
   // 检查是否是子节点（ModelNode）
   if (mounted._isNode && mounted._node) {
     const node = mounted._node
-    // 优先使用 node 的 name 属性，如果没有则尝试从 _runtimeNode 获取
-    return node.name || node._runtimeNode?.name || 'ModelNode'
+    // 支持 ModelNode（.name）和 ModelRuntimeNode（._name）
+    return node.name || node._name || 'ModelNode'
   }
 
   // 3D Tiles

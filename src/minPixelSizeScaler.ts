@@ -6,13 +6,17 @@ import {
   SceneMode,
 } from 'cesium'
 
+// 模块级复用变量，避免每帧分配
+const scratchBoundingSphere = new BoundingSphere()
+const scratchPosition = new Cartesian3()
+const scratchCartographic = new Cartographic()
+
 function getScaleInPixels(
   positionWC: Cartesian3,
   radius: number,
   frameState: any,
 ): number {
-  const scratchBoundingSphere = new BoundingSphere()
-  scratchBoundingSphere.center = positionWC
+  Cartesian3.clone(positionWC, scratchBoundingSphere.center)
   scratchBoundingSphere.radius = radius
   return frameState.camera.getPixelSize(
     scratchBoundingSphere,
@@ -22,8 +26,6 @@ function getScaleInPixels(
 }
 
 export function getScaleForMinimumSize(model: Gizmo, frameState: any): number {
-  const scratchPosition = new Cartesian3()
-  const scratchCartographic = new Cartographic()
 
   // 计算包围球的像素大小
   const context = frameState.context

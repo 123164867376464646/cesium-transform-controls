@@ -112,6 +112,9 @@ export class Gizmo {
   _localBoundsPrimitive: Primitive | null
   _worldAABBPrimitive: Primitive | null
   _currentBounds: { min: Cartesian3, max: Cartesian3 } | null
+  // 缓存相关属性
+  _cachedModelBounds: { min: Cartesian3, max: Cartesian3 } | null
+  _lastBoundingBoxUpdateMatrix: Matrix4 | null
 
   constructor(options?: GizmoOptions) {
     options = options || {}
@@ -175,6 +178,8 @@ export class Gizmo {
     this._localBoundsPrimitive = null
     this._worldAABBPrimitive = null
     this._currentBounds = null
+    this._cachedModelBounds = null
+    this._lastBoundingBoxUpdateMatrix = null
 
     this.createGizmoPrimitive()
   }
@@ -835,6 +840,19 @@ export class Gizmo {
     else if (mounted.modelMatrix) {
       Matrix4.clone(mounted.modelMatrix, this.modelMatrix)
     }
+
+    // 更新包围盒（如果有变化）
+    this._updateBoundingBoxes()
+  }
+
+  /**
+   * 重置包围盒缓存
+   * 应在切换挂载对象时调用
+   */
+  private _resetBoundingBoxCache() {
+    this._cachedModelBounds = null
+    this._lastBoundingBoxUpdateMatrix = null
+    this._clearBoundingBoxes()
   }
 
   mountToEntity(entity: Entity, viewer?: Viewer | null) {
@@ -862,6 +880,9 @@ export class Gizmo {
     Matrix4.clone(transform, this.modelMatrix)
     this.autoSyncMountedPrimitive = true
     this._lastSyncedPosition = position.clone()
+
+    // 重置包围盒缓存
+    this._resetBoundingBoxCache()
 
     // 挂载完成后刷新显示状态
     if (this.mode) {
@@ -912,14 +933,12 @@ export class Gizmo {
     const gizmoMatrix = Matrix4.fromRotationTranslation(pureRotation, position, new Matrix4())
     Matrix4.clone(gizmoMatrix, this.modelMatrix)
 
+    // 重置包围盒缓存
+    this._resetBoundingBoxCache()
+
     // 挂载完成后刷新显示状态
     if (this.mode) {
       this.setMode(this.mode)
-    }
-
-    // 更新包围盒显示
-    if (this._showLocalBounds || this._showWorldAABB) {
-      this._updateBoundingBoxes()
     }
   }
 
@@ -1101,14 +1120,12 @@ export class Gizmo {
     Matrix4.clone(gizmoMatrix, this.modelMatrix)
     this.autoSyncMountedPrimitive = false
 
+    // 重置包围盒缓存
+    this._resetBoundingBoxCache()
+
     // 挂载完成后刷新显示状态
     if (this.mode) {
       this.setMode(this.mode)
-    }
-
-    // 更新包围盒显示
-    if (this._showLocalBounds || this._showWorldAABB) {
-      this._updateBoundingBoxes()
     }
   }
 
@@ -1568,7 +1585,7 @@ export class Gizmo {
 
     const instance = new GeometryInstance({
       geometry,
-      modelMatrix, // 跟随物体旋转
+      modelMatrix: Matrix4.IDENTITY, // 使用 Identity，变换由 Primitive 控制
       attributes: {
         color: ColorGeometryInstanceAttribute.fromColor(this._localBoundsColor.withAlpha(0.99)),
       },
@@ -1585,6 +1602,7 @@ export class Gizmo {
           blending: BlendingState.ALPHA_BLEND,
         },
       }),
+      modelMatrix, // 将变换应用在 Primitive 上
       asynchronous: false,
     })
   }
@@ -1642,22 +1660,25 @@ export class Gizmo {
       return
     }
 
-    // 先清除旧的包围盒
-    this._clearBoundingBoxes()
-
-    // 如果都不显示，直接返回
+    // 如果都不显示，直接返回，并清理现有包围盒
     if (!this._showLocalBounds && !this._showWorldAABB) {
+      // console.log('BoundingBoxOpt: Not showing any bounds')
+      this._clearBoundingBoxes()
       return
     }
-
+    
+    // 如果已有缓存的 Bounds，直接使用避免重复解析 glTF
+    let bounds = this._cachedModelBounds
+    // console.log('BoundingBoxOpt: Update called. Cached bounds:', !!bounds)
+    
     const mounted = this._mountedPrimitive as MountedVirtualPrimitive
-
-    let bounds: { min: Cartesian3, max: Cartesian3 } | null = null
     let modelMatrix: Matrix4
 
     if (mounted._isNode && mounted._node && mounted._model) {
       // 子节点：获取原始边界并使用完整的物理世界矩阵
-      bounds = this._getNodeBounds(mounted._node, mounted._model)
+      if (!bounds) {
+        bounds = this._getNodeBounds(mounted._node, mounted._model)
+      }
 
       // 使用完整公式计算物理世界矩阵：
       // worldMatrix = modelMatrix × components.transform × axisCorrectionMatrix × transformToRoot × transform
@@ -1713,7 +1734,9 @@ export class Gizmo {
     else {
       // 普通 Model
       const model = this._mountedPrimitive as any
-      bounds = this._getModelBounds(model)
+      if (!bounds) {
+        bounds = this._getModelBounds(model)
+      }
       modelMatrix = model.modelMatrix
     }
 
@@ -1723,17 +1746,85 @@ export class Gizmo {
 
     // 缓存当前边界数据
     this._currentBounds = bounds
+    this._cachedModelBounds = bounds
 
-    // 创建 LocalBounds
-    if (this._showLocalBounds) {
-      this._localBoundsPrimitive = this._createLocalBoundsPrimitive(bounds, modelMatrix)
-      this._viewer.scene.primitives.add(this._localBoundsPrimitive)
+    // --- 优化：检查是否需要更新 ---
+    // 只有当矩阵发生明显变化，或者 Primitive 尚未创建时，才需要销毁重建 WorldAABB
+    // 对于 LocalBounds，只需要创建一次，后续只需更新 matrix（除非切换挂载对象）
+
+    const matrixEquals = this._lastBoundingBoxUpdateMatrix
+      && Matrix4.equalsEpsilon(this._lastBoundingBoxUpdateMatrix, modelMatrix, CesiumMath.EPSILON5)
+
+    if (matrixEquals && this._localBoundsPrimitive && this._worldAABBPrimitive) {
+        // 如果矩阵未变且图元都已就绪，则无需任何操作
+        return
+    }
+    
+    // 如果只显示 LocalBounds 且已存在，且矩阵未变，也直接返回（LocalBounds 更新在下面，但如果矩阵未变其实也不用更新，不过Cesium的update可能需要）
+    // 为了稳妥，只要矩阵变了就继续。如果矩阵没变，检查需要的图元是否都存在。
+    const needLocal = this._showLocalBounds
+    const needWorld = this._showWorldAABB
+    const hasLocal = !!this._localBoundsPrimitive
+    const hasWorld = !!this._worldAABBPrimitive
+    
+    if (matrixEquals) {
+        if ((!needLocal || hasLocal) && (!needWorld || hasWorld)) {
+            return
+        }
     }
 
-    // 创建 WorldAABB
+    // 记录本次更新的矩阵
+    if (!this._lastBoundingBoxUpdateMatrix) {
+        this._lastBoundingBoxUpdateMatrix = new Matrix4()
+    }
+    Matrix4.clone(modelMatrix, this._lastBoundingBoxUpdateMatrix)
+
+
+    // 1. 处理 LocalBounds (OBB) - 随物体旋转
+    if (this._showLocalBounds) {
+      if (!this._localBoundsPrimitive) {
+        // 首次创建
+        // console.log('BoundingBoxOpt: Creating LocalBoundsPrimitive', bounds, modelMatrix)
+        this._localBoundsPrimitive = this._createLocalBoundsPrimitive(bounds, modelMatrix)
+        // 确保矩阵被设置 (防止构造函数参数未生效)
+        this._localBoundsPrimitive.modelMatrix = Matrix4.clone(modelMatrix, new Matrix4())
+        this._viewer.scene.primitives.add(this._localBoundsPrimitive)
+      } else {
+        // 已存在，仅更新位置矩阵 (Primitive.modelMatrix 是可写的)
+        // 注意：LocalBounds 是 GeometryInstance，更新 Primitive.modelMatrix 会生效
+        // console.log('BoundingBoxOpt: Updating LocalBoundsPrimitive matrix')
+        this._localBoundsPrimitive.modelMatrix = modelMatrix
+      }
+    } else {
+      // 如果关闭显示，销毁现有实例
+      if (this._localBoundsPrimitive) {
+         this._viewer.scene.primitives.remove(this._localBoundsPrimitive)
+         this._localBoundsPrimitive = null
+      }
+    }
+
+
+    // 2. 处理 WorldAABB (AABB) - 始终轴对齐
+    // 对于 AABB，因为其形状随旋转改变（Geometry 顶点改变），无法简单通过 modelMatrix 更新
+    // 必须重建 Geometry，或者使用动态更新 Geometry 的高级方法。
+    // 这里为了简单和正确，保持重建策略，但利用 matrixEquals 避免静止时的重建。
+
     if (this._showWorldAABB) {
-      this._worldAABBPrimitive = this._createWorldAABBPrimitive(bounds, modelMatrix)
-      this._viewer.scene.primitives.add(this._worldAABBPrimitive)
+      if (!matrixEquals || !this._worldAABBPrimitive) {
+         // 需要重建 (位置变了，或者首次创建)
+         if (this._worldAABBPrimitive) {
+           this._viewer.scene.primitives.remove(this._worldAABBPrimitive)
+         }
+         this._worldAABBPrimitive = this._createWorldAABBPrimitive(bounds, modelMatrix)
+         this._viewer.scene.primitives.add(this._worldAABBPrimitive)
+      }
+      // 如果 matrixEquals && _worldAABBPrimitive 存在，则什么都不用做 (Primitive 保持原样)
+    } else {
+      // 如果关闭显示，销毁现有实例
+      if (this._worldAABBPrimitive) {
+        this._viewer.scene.primitives.remove(this._worldAABBPrimitive)
+        this._worldAABBPrimitive = null
+      }
     }
   }
 
