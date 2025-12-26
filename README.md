@@ -118,11 +118,11 @@ Gizmo 内置了鼠标点击选中功能，点击场景中的对象即可自动�
 ```typescript
 const gizmo = new Gizmo()
 gizmo.attach(viewer)
-// 不需要手动调用 mountToPrimitive/mountToEntity
-// 直接点击场景中的 Primitive 或 Entity 即可自动挂载 Gizmo
+// 不需要手动调用 mountToPrimitive/mountToEntity/mountToNode
+// 直接点击场景中的 Primitive、Entity 或 ModelNode 即可自动挂载 Gizmo
 ```
 
-点击场景中的对象时，Gizmo 会自动识别并挂载到该对象上。点击空白处可以取消选中。
+点击场景中的对象时，Gizmo 会自动识别并挂载到该对象上。**支持点击模型的子节点，将自动挂载到对应节点**。点击空白处可以取消选中。
 
 ### 方式三:三层控制机制
 

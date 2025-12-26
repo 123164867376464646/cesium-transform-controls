@@ -956,9 +956,18 @@ export class Gizmo {
     }
 
     // 获取节点的 runtimeNode
-    const runtimeNode = (node as any)._runtimeNode
-    if (!runtimeNode) {
-      console.error('Cannot access _runtimeNode') // 无法访问 _runtimeNode
+    // 支持两种输入类型：
+    // 1. ModelNode（通过 model.getNode() 获取）: 需要通过 node._runtimeNode 访问
+    // 2. ModelRuntimeNode（通过 picked.detail.node 获取）: 它本身就是 runtimeNode
+    let runtimeNode: any
+    if (node._runtimeNode) {
+      // 传入的是 ModelNode
+      runtimeNode = node._runtimeNode
+    } else if (node.transform !== undefined || node.transformToRoot !== undefined) {
+      // 传入的是 ModelRuntimeNode（直接来自 picked.detail.node）
+      runtimeNode = node
+    } else {
+      console.error('Cannot access runtime node information') // 无法访问运行时节点信息
       return
     }
 
@@ -1492,7 +1501,8 @@ export class Gizmo {
       }
 
       // 尝试通过节点名称找到对应的 glTF 节点索引
-      const nodeName = node.name
+      // 支持 ModelNode（.name）和 ModelRuntimeNode（._name）
+      const nodeName = node.name || node._name
       let nodeIndex = -1
       for (let i = 0; i < gltf.nodes.length; i++) {
         if (gltf.nodes[i].name === nodeName) {
@@ -1653,7 +1663,10 @@ export class Gizmo {
       // worldMatrix = modelMatrix × components.transform × axisCorrectionMatrix × transformToRoot × transform
       const node = mounted._node
       const model = mounted._model
-      const runtimeNode = node._runtimeNode
+      // 支持两种情况：
+      // 1. node 是 ModelNode（有 _runtimeNode 属性）
+      // 2. node 是 ModelRuntimeNode（本身就是 runtimeNode，有 transform/transformToRoot 属性）
+      const runtimeNode = node._runtimeNode || (node.transform !== undefined || node.transformToRoot !== undefined ? node : null)
       const sceneGraph = model._sceneGraph
 
       const nodeTransform = runtimeNode?.transform || node.matrix || Matrix4.IDENTITY

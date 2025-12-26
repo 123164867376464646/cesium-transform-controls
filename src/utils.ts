@@ -73,6 +73,25 @@ function worldToWindowCoordinates(scene: any, position: Cartesian3): Cartesian2 
   return (SceneTransforms as any).wgs84ToWindowCoordinates(scene, position)
 }
 
+/**
+ * 获取节点的 runtimeNode
+ * 支持两种输入类型：
+ * 1. ModelNode（通过 model.getNode() 获取）: 需要通过 node._runtimeNode 访问
+ * 2. ModelRuntimeNode（通过 picked.detail.node 获取）: 它本身就是 runtimeNode
+ * @param node - ModelNode 或 ModelRuntimeNode
+ * @returns runtimeNode 对象
+ */
+function getRuntimeNode(node: any): any {
+  if (node._runtimeNode) {
+    // 传入的是 ModelNode
+    return node._runtimeNode
+  } else if (node.transform !== undefined || node.transformToRoot !== undefined) {
+    // 传入的是 ModelRuntimeNode（直接来自 picked.detail.node）
+    return node
+  }
+  return null
+}
+
 let startPos = new Cartesian2() // 用于平移和旋转
 let gizmoStartPos = new Cartesian3()
 let gizmoStartModelMatrix = new Matrix4()
@@ -129,8 +148,14 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
           }
         })
 
+        // 检查是否点击了模型的子节点 (ModelNode)
+        if (picked.detail?.node && picked.primitive?.modelMatrix instanceof Matrix4) {
+          const node = picked.detail.node
+          const model = picked.primitive
+          gizmo.mountToNode(node, model, viewer)
+        }
         // 检查是否是Entity
-        if (picked.id && picked.id.position) {
+        else if (picked.id && picked.id.position) {
           const entity = picked.id
           const position = entity.position.getValue(viewer.clock.currentTime)
           if (position) {
@@ -154,7 +179,7 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
             }
           }
         }
-        // 检查是否是Primitive
+        // 检查是否是Primitive（整个模型）
         else if (picked.primitive && picked.primitive.modelMatrix instanceof Matrix4) {
           gizmo._mountedPrimitive = picked.primitive
           gizmo.modelMatrix = picked.primitive.modelMatrix.clone()
@@ -178,6 +203,13 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
       }
       if (gizmo._scalePrimitives) {
         gizmo._scalePrimitives._show = false
+      }
+      // 同时隐藏包围盒（保持与 gizmo 隐藏行为一致）
+      if (gizmo._localBoundsPrimitive) {
+        gizmo._localBoundsPrimitive.show = false
+      }
+      if (gizmo._worldAABBPrimitive) {
+        gizmo._worldAABBPrimitive.show = false
       }
     }
   }, ScreenSpaceEventType.LEFT_CLICK)
@@ -485,7 +517,7 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
             // 处理节点的变换更新
             const node = (mountedPrimitive as any)._node
             const model = (mountedPrimitive as any)._model
-            const runtimeNode = node._runtimeNode
+            const runtimeNode = getRuntimeNode(node)
             const sceneGraph = (mountedPrimitive as any)._sceneGraph || model._sceneGraph
             const axisCorrectionMatrix = (mountedPrimitive as any)._axisCorrectionMatrix || Matrix4.IDENTITY
 
@@ -678,7 +710,7 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
             // 处理节点的变换更新（Surface 模式）
             const node = (mountedPrimitive as any)._node
             const model = (mountedPrimitive as any)._model
-            const runtimeNode = node._runtimeNode
+            const runtimeNode = getRuntimeNode(node)
             const sceneGraph = (mountedPrimitive as any)._sceneGraph || model._sceneGraph
             const axisCorrectionMatrix = (mountedPrimitive as any)._axisCorrectionMatrix || Matrix4.IDENTITY
 
@@ -1009,7 +1041,7 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
           // 处理节点的缩放更新
           const node = (mountedPrimitive as any)._node
           const model = (mountedPrimitive as any)._model
-          const runtimeNode = node._runtimeNode
+          const runtimeNode = getRuntimeNode(node)
           const sceneGraph = (mountedPrimitive as any)._sceneGraph || model._sceneGraph
           const axisCorrectionMatrix = (mountedPrimitive as any)._axisCorrectionMatrix || Matrix4.IDENTITY
 
@@ -1672,7 +1704,7 @@ function computeNodeGizmoMatrix(
   newNodeMatrix: Matrix4,
 ): Matrix4 {
   const model = mountedPrimitive._model
-  const runtimeNode = mountedPrimitive._node._runtimeNode
+  const runtimeNode = getRuntimeNode(mountedPrimitive._node)
   const sceneGraph = mountedPrimitive._sceneGraph || model._sceneGraph
   const axisCorrectionMatrix = mountedPrimitive._axisCorrectionMatrix || Matrix4.IDENTITY
 
@@ -1737,7 +1769,7 @@ function applyRotateToNode(
 
   const node = mountedPrimitive._node
   const model = mountedPrimitive._model
-  const runtimeNode = node._runtimeNode
+  const runtimeNode = getRuntimeNode(node)
   const sceneGraph = mountedPrimitive._sceneGraph || model._sceneGraph
   const axisCorrectionMatrix = mountedPrimitive._axisCorrectionMatrix || Matrix4.IDENTITY
 
@@ -1875,7 +1907,7 @@ function applyRotateToNodeSurface(
 ) {
   const node = mountedPrimitive._node
   const model = mountedPrimitive._model
-  const runtimeNode = node._runtimeNode
+  const runtimeNode = getRuntimeNode(node)
 
   // 获取节点当前的变换矩阵
   const nodeTransform = runtimeNode?.transform || node.matrix || Matrix4.IDENTITY
