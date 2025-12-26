@@ -1450,26 +1450,74 @@ export class Gizmo {
         const node = gltf.nodes[nodeIndex]
 
         // 计算当前节点的局部矩阵
+        // 优先使用运行时节点的 transform（反映用户交互后的变换），如果获取不到再回退到 glTF 静态变换
         let localMatrix = Matrix4.clone(Matrix4.IDENTITY, new Matrix4())
-        if (node.matrix) {
-          localMatrix = Matrix4.fromArray(node.matrix)
+        let useRuntimeTransform = false
+
+        // 尝试获取运行时节点的变换
+        if (node.name && model.getNode) {
+          try {
+            const runtimeNode = model.getNode(node.name)
+            if (runtimeNode) {
+              // 获取运行时节点的 transform（包含用户交互后的变换）
+              const runtimeNodeInternal = runtimeNode._runtimeNode || runtimeNode
+              if (runtimeNodeInternal?.transform) {
+                localMatrix = Matrix4.clone(runtimeNodeInternal.transform, new Matrix4())
+                useRuntimeTransform = true
+              }
+            }
+          }
+          catch {
+            // 如果获取运行时节点失败，使用 glTF 静态变换
+          }
+        }
+
+        // 如果没有获取到运行时变换，回退到 glTF 静态变换
+        if (!useRuntimeTransform) {
+          if (node.matrix) {
+            localMatrix = Matrix4.fromArray(node.matrix)
+          }
+          else {
+            const translation = node.translation
+              ? new Cartesian3(node.translation[0], node.translation[1], node.translation[2])
+              : Cartesian3.ZERO
+            const rotation = node.rotation
+              ? new (CesiumInternal as any).Quaternion(node.rotation[0], node.rotation[1], node.rotation[2], node.rotation[3])
+              : (CesiumInternal as any).Quaternion.IDENTITY
+            const scale = node.scale
+              ? new Cartesian3(node.scale[0], node.scale[1], node.scale[2])
+              : new Cartesian3(1, 1, 1)
+
+            localMatrix = Matrix4.fromTranslationQuaternionRotationScale(translation, rotation, scale)
+          }
+        }
+
+        // 使用运行时变换时，transform 已经包含了完整的父节点链变换（transformToRoot 的效果）
+        // 所以不需要再乘以 parentMatrix
+        let nodeGlobalMatrix: Matrix4
+        if (useRuntimeTransform) {
+          // 运行时 transform 是相对于节点自身的局部变换，仍需乘以父级
+          // 但是如果父级也使用了运行时变换，就会有重复，需要特殊处理
+          // 简化方案：运行时变换的节点使用 transformToRoot 直接得到相对于模型根的完整变换
+          const runtimeNode = model.getNode(node.name)
+          const runtimeNodeInternal = runtimeNode?._runtimeNode || runtimeNode
+          if (runtimeNodeInternal?.transformToRoot) {
+            // 使用 transformToRoot × transform 得到节点在模型空间的完整变换
+            nodeGlobalMatrix = Matrix4.multiply(
+              runtimeNodeInternal.transformToRoot,
+              runtimeNodeInternal.transform,
+              new Matrix4()
+            )
+          }
+          else {
+            // 如果没有 transformToRoot，仍然用 parentMatrix
+            nodeGlobalMatrix = Matrix4.multiply(parentMatrix, localMatrix, new Matrix4())
+          }
         }
         else {
-          const translation = node.translation
-            ? new Cartesian3(node.translation[0], node.translation[1], node.translation[2])
-            : Cartesian3.ZERO
-          const rotation = node.rotation
-            ? new (CesiumInternal as any).Quaternion(node.rotation[0], node.rotation[1], node.rotation[2], node.rotation[3])
-            : (CesiumInternal as any).Quaternion.IDENTITY
-          const scale = node.scale
-            ? new Cartesian3(node.scale[0], node.scale[1], node.scale[2])
-            : new Cartesian3(1, 1, 1)
-
-          localMatrix = Matrix4.fromTranslationQuaternionRotationScale(translation, rotation, scale)
+          // 组合父级矩阵：parentMatrix × localMatrix
+          nodeGlobalMatrix = Matrix4.multiply(parentMatrix, localMatrix, new Matrix4())
         }
-
-        // 组合父级矩阵：parentMatrix × localMatrix
-        const nodeGlobalMatrix = Matrix4.multiply(parentMatrix, localMatrix, new Matrix4())
 
         // 处理该节点下的 Mesh
         if (node.mesh !== undefined) {
