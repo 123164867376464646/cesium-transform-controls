@@ -1054,14 +1054,92 @@ export class Gizmo {
     // 获取节点世界位置
     const nodeWorldPosition = Matrix4.getTranslation(nodeWorldMatrix, new Cartesian3())
     
-    // --- 计算 Visual Offset (关键逻辑) ---
-    // 目标：Gizmo 初始显示时，旋转轴应与根模型一致 (Blue Up)，这也是用户预期的 "Normal" 状态。
-    // 但是节点的物理矩阵 (nodeWorldMatrix) 可能是 Green Up (Y-up with Correction)。
-    // 我们计算一个 offset 矩阵，使得 nodeWorldMatrix * offset = visualGizmoMatrix
+    // --- 计算 Gizmo 旋转（Local 模式） ---
+    // 目标：
+    // 1. 初始状态下（节点未被用户操作），gizmo 轴与整体模型一致
+    // 2. 用户通过 gizmo 旋转节点后，gizmo 轴反映用户的操作
+    //
+    // 思路：
+    // - 从 glTF 获取节点的"原始变换"（建模时设置的）
+    // - 计算"用户累积旋转" = 当前变换 × inverse(原始变换)
+    // - gizmo 旋转 = model.modelMatrix 旋转 × 用户累积旋转
     
-    // 1. 物理旋转矩阵 (从 nodeWorldMatrix 提取，去除位移/缩放)
+    // 1. 获取 glTF 中节点的原始变换
+    const gltf = this._getGltfJson(model)
+    let originalNodeTransform = Matrix4.IDENTITY
+    if (gltf && gltf.nodes) {
+      const nodeName = node.name || node._name
+      for (let i = 0; i < gltf.nodes.length; i++) {
+        if (gltf.nodes[i].name === nodeName) {
+          const gltfNode = gltf.nodes[i]
+          if (gltfNode.matrix) {
+            originalNodeTransform = Matrix4.fromArray(gltfNode.matrix)
+          } else {
+            const translation = gltfNode.translation
+              ? new Cartesian3(gltfNode.translation[0], gltfNode.translation[1], gltfNode.translation[2])
+              : Cartesian3.ZERO
+            const rotation = gltfNode.rotation
+              ? new (CesiumInternal as any).Quaternion(gltfNode.rotation[0], gltfNode.rotation[1], gltfNode.rotation[2], gltfNode.rotation[3])
+              : (CesiumInternal as any).Quaternion.IDENTITY
+            const scale = gltfNode.scale
+              ? new Cartesian3(gltfNode.scale[0], gltfNode.scale[1], gltfNode.scale[2])
+              : new Cartesian3(1, 1, 1)
+            originalNodeTransform = Matrix4.fromTranslationQuaternionRotationScale(translation, rotation, scale)
+          }
+          break
+        }
+      }
+    }
+    
+    // 2. 计算用户累积旋转
+    // userAppliedTransform = currentTransform × inverse(originalTransform)
+    const originalTransformInverse = Matrix4.inverse(originalNodeTransform, new Matrix4())
+    const userAppliedTransform = Matrix4.multiply(nodeTransform, originalTransformInverse, new Matrix4())
+    
+    // 提取用户累积旋转的纯旋转部分（去除缩放）
+    const userRotationWithScale = Matrix4.getMatrix3(userAppliedTransform, new Matrix3())
+    const uCol0 = new Cartesian3(userRotationWithScale[0], userRotationWithScale[1], userRotationWithScale[2])
+    const uCol1 = new Cartesian3(userRotationWithScale[3], userRotationWithScale[4], userRotationWithScale[5])
+    const uCol2 = new Cartesian3(userRotationWithScale[6], userRotationWithScale[7], userRotationWithScale[8])
+    Cartesian3.normalize(uCol0, uCol0)
+    Cartesian3.normalize(uCol1, uCol1)
+    Cartesian3.normalize(uCol2, uCol2)
+    const userRotationPure = new Matrix3(
+        uCol0.x, uCol1.x, uCol2.x,
+        uCol0.y, uCol1.y, uCol2.y,
+        uCol0.z, uCol1.z, uCol2.z
+    )
+    
+    // 3. 获取 model.modelMatrix 的纯旋转部分
+    const modelRotationWithScale = Matrix4.getMatrix3(model.modelMatrix, new Matrix3())
+    const mCol0 = new Cartesian3(modelRotationWithScale[0], modelRotationWithScale[1], modelRotationWithScale[2])
+    const mCol1 = new Cartesian3(modelRotationWithScale[3], modelRotationWithScale[4], modelRotationWithScale[5])
+    const mCol2 = new Cartesian3(modelRotationWithScale[6], modelRotationWithScale[7], modelRotationWithScale[8])
+    Cartesian3.normalize(mCol0, mCol0)
+    Cartesian3.normalize(mCol1, mCol1)
+    Cartesian3.normalize(mCol2, mCol2)
+    const modelRotationPure = new Matrix3(
+        mCol0.x, mCol1.x, mCol2.x,
+        mCol0.y, mCol1.y, mCol2.y,
+        mCol0.z, mCol1.z, mCol2.z
+    )
+    
+    // 4. 计算 gizmo 旋转 = modelRotation × userRotation
+    // 初始状态下 userRotation = IDENTITY，所以 gizmo 与整体模型一致
+    // 用户操作后，gizmo 反映用户的累积旋转
+    const gizmoRotation = Matrix3.multiply(modelRotationPure, userRotationPure, new Matrix3())
+    
+    // 5. 构建 Gizmo Matrix
+    const gizmoMatrix = Matrix4.fromRotationTranslation(
+      gizmoRotation,
+      nodeWorldPosition,
+      new Matrix4()
+    )
+    
+    // 6. 计算 visualOffset（用于 computeNodeGizmoMatrix 更新）
+    // visualOffset = inverse(物理旋转) × gizmo旋转
+    // 从 nodeWorldMatrix 提取物理旋转
     const physRotationMatrix = Matrix4.getMatrix3(nodeWorldMatrix, new Matrix3())
-    // 归一化
     const pCol0 = new Cartesian3(physRotationMatrix[0], physRotationMatrix[1], physRotationMatrix[2])
     const pCol1 = new Cartesian3(physRotationMatrix[3], physRotationMatrix[4], physRotationMatrix[5])
     const pCol2 = new Cartesian3(physRotationMatrix[6], physRotationMatrix[7], physRotationMatrix[8])
@@ -1074,34 +1152,9 @@ export class Gizmo {
         pCol0.z, pCol1.z, pCol2.z
     )
     const physMatrixPure = Matrix4.fromRotationTranslation(physRotationPure, Cartesian3.ZERO, new Matrix4())
-
-    // 2. 视觉目标旋转矩阵 (使用 model.modelMatrix 的旋转，即 Root-aligned)
-    const visualRotationMatrix = Matrix4.getMatrix3(model.modelMatrix, new Matrix3())
-    // 归一化
-    const vCol0 = new Cartesian3(visualRotationMatrix[0], visualRotationMatrix[1], visualRotationMatrix[2])
-    const vCol1 = new Cartesian3(visualRotationMatrix[3], visualRotationMatrix[4], visualRotationMatrix[5])
-    const vCol2 = new Cartesian3(visualRotationMatrix[6], visualRotationMatrix[7], visualRotationMatrix[8])
-    Cartesian3.normalize(vCol0, vCol0)
-    Cartesian3.normalize(vCol1, vCol1)
-    Cartesian3.normalize(vCol2, vCol2)
-    const visualRotationPure = new Matrix3(
-        vCol0.x, vCol1.x, vCol2.x,
-        vCol0.y, vCol1.y, vCol2.y,
-        vCol0.z, vCol1.z, vCol2.z
-    )
-    const visualMatrixPure = Matrix4.fromRotationTranslation(visualRotationPure, Cartesian3.ZERO, new Matrix4())
-
-    // 3. 计算 Offset: Offset = Inverse(Physical) * Visual
+    const gizmoMatrixPure = Matrix4.fromRotationTranslation(gizmoRotation, Cartesian3.ZERO, new Matrix4())
     const inversePhys = Matrix4.inverse(physMatrixPure, new Matrix4())
-    const visualOffset = Matrix4.multiply(inversePhys, visualMatrixPure, new Matrix4())
-
-    // 4. 构建初始 Gizmo Matrix (Position=Node, Rotation=Visual)
-    // 实际上这就是 nodeWorldMatrix * offset (在仅旋转意义上)
-    const gizmoMatrix = Matrix4.fromRotationTranslation(
-      visualRotationPure,
-      nodeWorldPosition,
-      new Matrix4()
-    )
+    const visualOffset = Matrix4.multiply(inversePhys, gizmoMatrixPure, new Matrix4())
 
     // 创建包装对象
     const nodeWrapper = {
@@ -1112,7 +1165,8 @@ export class Gizmo {
       _axisCorrectionMatrix: axisCorrectionMatrix,
       _sceneGraph: sceneGraph,
       _scale: 1,
-      _visualOffset: visualOffset, // 保存偏移矩阵
+      _visualOffset: visualOffset,
+      _originalTransformInverse: originalTransformInverse, // 保存原始变换的逆，用于后续更新
     }
 
     // 挂载
