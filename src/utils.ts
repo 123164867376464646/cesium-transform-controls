@@ -734,12 +734,12 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
             const sceneGraph = (mountedPrimitive as any)._sceneGraph || model._sceneGraph
             const axisCorrectionMatrix = (mountedPrimitive as any)._axisCorrectionMatrix || Matrix4.IDENTITY
 
-            // 获取新 gizmo 位置和旧 gizmo 位置
-            const newGizmoPosition = Matrix4.getTranslation(resultMatrix, new Cartesian3())
-            const lastGizmoPosition = Matrix4.getTranslation(mountedPrimitive.modelMatrix, new Cartesian3())
+            // 获取新 gizmo 位置和旧 gizmo 位置（使用 scratch 变量）
+            Matrix4.getTranslation(resultMatrix, scratchNewWorldPosition)
+            Matrix4.getTranslation(mountedPrimitive.modelMatrix, scratchLastGizmoTranslation)
 
             // 计算这一帧的位移增量（世界坐标）
-            const deltaWorld = Cartesian3.subtract(newGizmoPosition, lastGizmoPosition, new Cartesian3())
+            Cartesian3.subtract(scratchNewWorldPosition, scratchLastGizmoTranslation, scratchDeltaWorld)
 
             // 使用正确的公式计算节点世界矩阵（与 mountToNode 一致）
             const modelScale = (model as any).scale ?? 1
@@ -748,38 +748,37 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
             const componentsTransform = sceneGraph?.components?.transform || Matrix4.IDENTITY
 
             // 计算当前节点的世界矩阵
-            const step1 = Matrix4.multiply(transformToRoot, nodeTransform, new Matrix4())
-            const step2 = Matrix4.multiply(axisCorrectionMatrix, step1, new Matrix4())
-            const step3 = Matrix4.multiply(componentsTransform, step2, new Matrix4())
-            let step4: Matrix4
+            Matrix4.multiply(transformToRoot, nodeTransform, scratchStep1)
+            Matrix4.multiply(axisCorrectionMatrix, scratchStep1, scratchStep2)
+            Matrix4.multiply(componentsTransform, scratchStep2, scratchStep3)
             if (modelScale !== 1) {
               const scaleMatrix = Matrix4.fromUniformScale(modelScale)
-              step4 = Matrix4.multiply(scaleMatrix, step3, new Matrix4())
+              Matrix4.multiply(scaleMatrix, scratchStep3, scratchStep4)
             } else {
-              step4 = step3
+              Matrix4.clone(scratchStep3, scratchStep4)
             }
-            const nodeWorldMatrix = Matrix4.multiply(model.modelMatrix, step4, new Matrix4())
+            Matrix4.multiply(model.modelMatrix, scratchStep4, scratchNodeWorldMatrix)
 
             // 将世界坐标的位移转换到节点自身坐标系
-            const inverseNodeWorldMatrix = Matrix4.inverse(nodeWorldMatrix, new Matrix4())
-            const deltaInNodeSpace = Matrix4.multiplyByPointAsVector(
-              inverseNodeWorldMatrix,
-              deltaWorld,
-              new Cartesian3()
+            Matrix4.inverse(scratchNodeWorldMatrix, scratchInverseNodeWorldMatrix)
+            Matrix4.multiplyByPointAsVector(
+              scratchInverseNodeWorldMatrix,
+              scratchDeltaWorld,
+              scratchDeltaInNodeSpace
             )
 
             // 创建节点坐标系中的平移矩阵，并应用到当前节点矩阵
-            const translationMatrix = Matrix4.fromTranslation(deltaInNodeSpace, new Matrix4())
-            const newNodeMatrix = Matrix4.multiply(
+            Matrix4.fromTranslation(scratchDeltaInNodeSpace, scratchTranslationMatrix)
+            Matrix4.multiply(
               nodeTransform,
-              translationMatrix,
-              new Matrix4()
+              scratchTranslationMatrix,
+              scratchNewNodeMatrix
             )
 
             // 更新节点矩阵
-            node.matrix = newNodeMatrix
+            node.matrix = scratchNewNodeMatrix
             if (runtimeNode) {
-              runtimeNode.transform = newNodeMatrix
+              runtimeNode.transform = scratchNewNodeMatrix
             }
 
             // 同时更新 wrapper 的 modelMatrix 以保持同步
@@ -789,9 +788,9 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
           }
           else if (mountedPrimitive) {
             // 保留原始缩放：从原始矩阵获取缩放并应用到新矩阵
-            const originalScale = Matrix4.getScale(mountedPrimitiveStartModelMatrix, new Cartesian3())
-            const resultWithScale = Matrix4.multiplyByScale(resultMatrix, originalScale, new Matrix4())
-            Matrix4.clone(resultWithScale, mountedPrimitive.modelMatrix)
+            Matrix4.getScale(mountedPrimitiveStartModelMatrix, scratchOriginalScale)
+            Matrix4.multiplyByScale(resultMatrix, scratchOriginalScale, scratchResultWithScale)
+            Matrix4.clone(scratchResultWithScale, mountedPrimitive.modelMatrix)
           }
         }
       }
@@ -878,21 +877,20 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
             Matrix4.clone(resultMatrix, mountedPrimitive.modelMatrix)
 
             // 更新 Gizmo 的 modelMatrix（移除缩放分量）
-            const position = Matrix4.getTranslation(resultMatrix, new Cartesian3())
-            const rotationWithScale = Matrix4.getMatrix3(resultMatrix, new Matrix3())
-            const col0 = new Cartesian3(rotationWithScale[0], rotationWithScale[1], rotationWithScale[2])
-            const col1 = new Cartesian3(rotationWithScale[3], rotationWithScale[4], rotationWithScale[5])
-            const col2 = new Cartesian3(rotationWithScale[6], rotationWithScale[7], rotationWithScale[8])
-            Cartesian3.normalize(col0, col0)
-            Cartesian3.normalize(col1, col1)
-            Cartesian3.normalize(col2, col2)
-            const pureRotation = new Matrix3(
-              col0.x, col1.x, col2.x,
-              col0.y, col1.y, col2.y,
-              col0.z, col1.z, col2.z
-            )
-            const gizmoMatrix = Matrix4.fromRotationTranslation(pureRotation, position, new Matrix4())
-            Matrix4.clone(gizmoMatrix, gizmo.modelMatrix)
+            Matrix4.getTranslation(resultMatrix, scratchPosition)
+            Matrix4.getMatrix3(resultMatrix, scratchRotationWithScale)
+            Cartesian3.fromElements(scratchRotationWithScale[0], scratchRotationWithScale[1], scratchRotationWithScale[2], scratchCol0)
+            Cartesian3.fromElements(scratchRotationWithScale[3], scratchRotationWithScale[4], scratchRotationWithScale[5], scratchCol1)
+            Cartesian3.fromElements(scratchRotationWithScale[6], scratchRotationWithScale[7], scratchRotationWithScale[8], scratchCol2)
+            Cartesian3.normalize(scratchCol0, scratchCol0)
+            Cartesian3.normalize(scratchCol1, scratchCol1)
+            Cartesian3.normalize(scratchCol2, scratchCol2)
+            Matrix3.setColumn(scratchPureRotation, 0, scratchCol0, scratchPureRotation)
+            Matrix3.setColumn(scratchPureRotation, 1, scratchCol1, scratchPureRotation)
+            Matrix3.setColumn(scratchPureRotation, 2, scratchCol2, scratchPureRotation)
+            Matrix4.fromRotationTranslation(scratchPureRotation, scratchPosition, scratchGizmoMatrix)
+            Matrix4.clone(scratchGizmoMatrix, gizmo.modelMatrix)
+
           }
         }
       }
@@ -983,21 +981,20 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
             Matrix4.clone(resultMatrix, mountedPrimitive.modelMatrix)
 
             // 更新 Gizmo 的 modelMatrix（移除缩放分量）
-            const position = Matrix4.getTranslation(resultMatrix, new Cartesian3())
-            const rotationWithScale = Matrix4.getMatrix3(resultMatrix, new Matrix3())
-            const col0 = new Cartesian3(rotationWithScale[0], rotationWithScale[1], rotationWithScale[2])
-            const col1 = new Cartesian3(rotationWithScale[3], rotationWithScale[4], rotationWithScale[5])
-            const col2 = new Cartesian3(rotationWithScale[6], rotationWithScale[7], rotationWithScale[8])
-            Cartesian3.normalize(col0, col0)
-            Cartesian3.normalize(col1, col1)
-            Cartesian3.normalize(col2, col2)
-            const pureRotation = new Matrix3(
-              col0.x, col1.x, col2.x,
-              col0.y, col1.y, col2.y,
-              col0.z, col1.z, col2.z
-            )
-            const gizmoMatrix = Matrix4.fromRotationTranslation(pureRotation, position, new Matrix4())
-            Matrix4.clone(gizmoMatrix, gizmo.modelMatrix)
+            Matrix4.getTranslation(resultMatrix, scratchPosition)
+            Matrix4.getMatrix3(resultMatrix, scratchRotationWithScale)
+            Cartesian3.fromElements(scratchRotationWithScale[0], scratchRotationWithScale[1], scratchRotationWithScale[2], scratchCol0)
+            Cartesian3.fromElements(scratchRotationWithScale[3], scratchRotationWithScale[4], scratchRotationWithScale[5], scratchCol1)
+            Cartesian3.fromElements(scratchRotationWithScale[6], scratchRotationWithScale[7], scratchRotationWithScale[8], scratchCol2)
+            Cartesian3.normalize(scratchCol0, scratchCol0)
+            Cartesian3.normalize(scratchCol1, scratchCol1)
+            Cartesian3.normalize(scratchCol2, scratchCol2)
+            Matrix3.setColumn(scratchPureRotation, 0, scratchCol0, scratchPureRotation)
+            Matrix3.setColumn(scratchPureRotation, 1, scratchCol1, scratchPureRotation)
+            Matrix3.setColumn(scratchPureRotation, 2, scratchCol2, scratchPureRotation)
+            Matrix4.fromRotationTranslation(scratchPureRotation, scratchPosition, scratchGizmoMatrix)
+            Matrix4.clone(scratchGizmoMatrix, gizmo.modelMatrix)
+
           }
         }
       }

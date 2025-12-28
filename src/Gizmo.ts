@@ -1056,13 +1056,8 @@ export class Gizmo {
     
     // --- 计算 Gizmo 旋转（Local 模式） ---
     // 目标：
-    // 1. 初始状态下（节点未被用户操作），gizmo 轴与整体模型一致
-    // 2. 用户通过 gizmo 旋转节点后，gizmo 轴反映用户的操作
-    //
-    // 思路：
-    // - 从 glTF 获取节点的"原始变换"（建模时设置的）
-    // - 计算"用户累积旋转" = 当前变换 × inverse(原始变换)
-    // - gizmo 旋转 = model.modelMatrix 旋转 × 用户累积旋转
+    // 1. 初始状态下（节点未被用户操作），Gizmo 轴与整体模型一致
+    // 2. 用户通过 Gizmo 旋转节点后，Gizmo 轴反映用户的操作
     
     // 1. 获取 glTF 中节点的原始变换
     const gltf = this._getGltfJson(model)
@@ -1091,26 +1086,47 @@ export class Gizmo {
       }
     }
     
-    // 2. 计算用户累积旋转
-    // userAppliedTransform = currentTransform × inverse(originalTransform)
+    // 2. 计算用户在节点局部空间中的累积旋转
+    // userLocalTransform = currentTransform × inverse(originalTransform)
     const originalTransformInverse = Matrix4.inverse(originalNodeTransform, new Matrix4())
-    const userAppliedTransform = Matrix4.multiply(nodeTransform, originalTransformInverse, new Matrix4())
+    const userLocalTransform = Matrix4.multiply(nodeTransform, originalTransformInverse, new Matrix4())
     
-    // 提取用户累积旋转的纯旋转部分（去除缩放）
-    const userRotationWithScale = Matrix4.getMatrix3(userAppliedTransform, new Matrix3())
-    const uCol0 = new Cartesian3(userRotationWithScale[0], userRotationWithScale[1], userRotationWithScale[2])
-    const uCol1 = new Cartesian3(userRotationWithScale[3], userRotationWithScale[4], userRotationWithScale[5])
-    const uCol2 = new Cartesian3(userRotationWithScale[6], userRotationWithScale[7], userRotationWithScale[8])
+    // 提取用户局部旋转的纯旋转部分（去除缩放）
+    const userLocalRotationWithScale = Matrix4.getMatrix3(userLocalTransform, new Matrix3())
+    const uCol0 = new Cartesian3(userLocalRotationWithScale[0], userLocalRotationWithScale[1], userLocalRotationWithScale[2])
+    const uCol1 = new Cartesian3(userLocalRotationWithScale[3], userLocalRotationWithScale[4], userLocalRotationWithScale[5])
+    const uCol2 = new Cartesian3(userLocalRotationWithScale[6], userLocalRotationWithScale[7], userLocalRotationWithScale[8])
     Cartesian3.normalize(uCol0, uCol0)
     Cartesian3.normalize(uCol1, uCol1)
     Cartesian3.normalize(uCol2, uCol2)
-    const userRotationPure = new Matrix3(
+    const userLocalRotationPure = new Matrix3(
         uCol0.x, uCol1.x, uCol2.x,
         uCol0.y, uCol1.y, uCol2.y,
         uCol0.z, uCol1.z, uCol2.z
     )
     
-    // 3. 获取 model.modelMatrix 的纯旋转部分
+    // 3. 将用户局部旋转转换到模型空间
+    // 转换矩阵：localToModel = axisCorrectionMatrix × transformToRoot (纯旋转部分)
+    const localToModelMatrix = Matrix4.multiply(axisCorrectionMatrix, transformToRoot, new Matrix4())
+    const localToModelRotationWithScale = Matrix4.getMatrix3(localToModelMatrix, new Matrix3())
+    const lCol0 = new Cartesian3(localToModelRotationWithScale[0], localToModelRotationWithScale[1], localToModelRotationWithScale[2])
+    const lCol1 = new Cartesian3(localToModelRotationWithScale[3], localToModelRotationWithScale[4], localToModelRotationWithScale[5])
+    const lCol2 = new Cartesian3(localToModelRotationWithScale[6], localToModelRotationWithScale[7], localToModelRotationWithScale[8])
+    Cartesian3.normalize(lCol0, lCol0)
+    Cartesian3.normalize(lCol1, lCol1)
+    Cartesian3.normalize(lCol2, lCol2)
+    const localToModelRotation = new Matrix3(
+        lCol0.x, lCol1.x, lCol2.x,
+        lCol0.y, lCol1.y, lCol2.y,
+        lCol0.z, lCol1.z, lCol2.z
+    )
+    const modelToLocalRotation = Matrix3.inverse(localToModelRotation, new Matrix3())
+    
+    // userModelRotation = localToModel × userLocalRotation × modelToLocal
+    const step1Rotation = Matrix3.multiply(localToModelRotation, userLocalRotationPure, new Matrix3())
+    const userModelRotation = Matrix3.multiply(step1Rotation, modelToLocalRotation, new Matrix3())
+    
+    // 4. 获取 model.modelMatrix 的纯旋转部分
     const modelRotationWithScale = Matrix4.getMatrix3(model.modelMatrix, new Matrix3())
     const mCol0 = new Cartesian3(modelRotationWithScale[0], modelRotationWithScale[1], modelRotationWithScale[2])
     const mCol1 = new Cartesian3(modelRotationWithScale[3], modelRotationWithScale[4], modelRotationWithScale[5])
@@ -1124,19 +1140,19 @@ export class Gizmo {
         mCol0.z, mCol1.z, mCol2.z
     )
     
-    // 4. 计算 gizmo 旋转 = modelRotation × userRotation
-    // 初始状态下 userRotation = IDENTITY，所以 gizmo 与整体模型一致
+    // 5. 计算 gizmo 旋转 = modelRotation × userModelRotation
+    // 初始状态下 userModelRotation = IDENTITY，所以 gizmo 与整体模型一致
     // 用户操作后，gizmo 反映用户的累积旋转
-    const gizmoRotation = Matrix3.multiply(modelRotationPure, userRotationPure, new Matrix3())
+    const gizmoRotation = Matrix3.multiply(modelRotationPure, userModelRotation, new Matrix3())
     
-    // 5. 构建 Gizmo Matrix
+    // 6. 构建 Gizmo Matrix
     const gizmoMatrix = Matrix4.fromRotationTranslation(
       gizmoRotation,
       nodeWorldPosition,
       new Matrix4()
     )
     
-    // 6. 计算 visualOffset（用于 computeNodeGizmoMatrix 更新）
+    // 7. 计算 visualOffset（用于 computeNodeGizmoMatrix 更新）
     // visualOffset = inverse(物理旋转) × gizmo旋转
     // 从 nodeWorldMatrix 提取物理旋转
     const physRotationMatrix = Matrix4.getMatrix3(nodeWorldMatrix, new Matrix3())
@@ -1166,7 +1182,6 @@ export class Gizmo {
       _sceneGraph: sceneGraph,
       _scale: 1,
       _visualOffset: visualOffset,
-      _originalTransformInverse: originalTransformInverse, // 保存原始变换的逆，用于后续更新
     }
 
     // 挂载
