@@ -9,8 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "cesium": "^1.135.0",
-    "cesium-transform-controls": "^1.2.1"
+    "cesium": "^1.135.0"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
