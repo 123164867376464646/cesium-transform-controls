@@ -289,7 +289,12 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
         gizmo._isInteracting = true
 
         if (typeof gizmo.onGizmoPointerDown === 'function') {
-          gizmo.onGizmoPointerDown(new PointerEvent('pointerdown'))
+          gizmo.onGizmoPointerDown({
+            screenPosition: movement.position,
+            pickedPart: pickedGizmoId,
+            mode: gizmo.mode,
+            coordinateMode: gizmo.coordinateMode,
+          })
         }
       }
       else {
@@ -320,6 +325,7 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
       }
 
 
+      const lastPickedGizmoId = pickedGizmoId // 先保存 ID
       pickedGizmoId = null
       startPos = new Cartesian2()
       gizmoStartPos = new Cartesian3()
@@ -331,7 +337,12 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
 
 
       if (typeof gizmo.onGizmoPointerUp === 'function') {
-        gizmo.onGizmoPointerUp(new PointerEvent('pointerup'))
+        gizmo.onGizmoPointerUp({
+          screenPosition: _movement.position,
+          pickedPart: lastPickedGizmoId, // 使用被重置前的 ID
+          mode: gizmo.mode,
+          coordinateMode: gizmo.coordinateMode,
+        })
       }
     }
 
@@ -517,11 +528,11 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
         gizmo.modelMatrix = newMatrix
 
         if (typeof gizmo.onGizmoPointerMove === 'function') {
-          gizmo.onGizmoPointerMove({
+        gizmo.onGizmoPointerMove({
             mode: GizmoMode.translate,
             transMode: CoordinateMode.local,
             result: translation,
-          } as any)
+          })
         }
 
         if (gizmo.applyTransformationToMountedPrimitive) {
@@ -709,11 +720,11 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
         Matrix4.clone(resultMatrix, gizmo.modelMatrix)
 
         if (typeof gizmo.onGizmoPointerMove === 'function') {
-          gizmo.onGizmoPointerMove({
+        gizmo.onGizmoPointerMove({
             mode: GizmoMode.translate,
             transMode: CoordinateMode.surface,
             result: resultMatrix.clone(),
-          } as any)
+          })
         }
 
         if (gizmo.applyTransformationToMountedPrimitive) {
@@ -852,11 +863,11 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
         Matrix4.multiplyByScale(resultMatrix, scale, resultMatrix)
 
         if (typeof gizmo.onGizmoPointerMove === 'function') {
-          gizmo.onGizmoPointerMove({
+        gizmo.onGizmoPointerMove({
             mode: GizmoMode.rotate,
             coordinateMode: CoordinateMode.local,
             result: Transforms.fixedFrameToHeadingPitchRoll(resultMatrix),
-          } as any)
+          })
         }
 
         if (gizmo.applyTransformationToMountedPrimitive) {
@@ -957,11 +968,11 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
         Matrix4.multiplyByScale(resultMatrix, scale, resultMatrix)
 
         if (typeof gizmo.onGizmoPointerMove === 'function') {
-          gizmo.onGizmoPointerMove({
+        gizmo.onGizmoPointerMove({
             mode: GizmoMode.rotate,
             coordinateMode: CoordinateMode.surface,
             result: Transforms.fixedFrameToHeadingPitchRoll(resultMatrix),
-          } as any)
+          })
         }
 
         if (gizmo.applyTransformationToMountedPrimitive) {
@@ -1030,7 +1041,7 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
         gizmo.onGizmoPointerMove({
           mode: GizmoMode.scale,
           result: Matrix4.fromScale(scale, scratchScaleMatrix),
-        } as any)
+        })
       }
 
       if (gizmo.applyTransformationToMountedPrimitive && scale) {
@@ -1154,24 +1165,22 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
           Matrix4.clone(resultMatrix, mountedPrimitive.modelMatrix)
 
           // 更新 Gizmo 的 modelMatrix，但移除缩放分量以避免 Gizmo 变形
-          // 提取位置
-          const position = Matrix4.getTranslation(resultMatrix, new Cartesian3())
-          // 提取旋转矩阵并归一化以移除缩放
-          const rotationWithScale = Matrix4.getMatrix3(resultMatrix, new Matrix3())
-          const col0 = new Cartesian3(rotationWithScale[0], rotationWithScale[1], rotationWithScale[2])
-          const col1 = new Cartesian3(rotationWithScale[3], rotationWithScale[4], rotationWithScale[5])
-          const col2 = new Cartesian3(rotationWithScale[6], rotationWithScale[7], rotationWithScale[8])
-          Cartesian3.normalize(col0, col0)
-          Cartesian3.normalize(col1, col1)
-          Cartesian3.normalize(col2, col2)
-          const pureRotation = new Matrix3(
-            col0.x, col1.x, col2.x,
-            col0.y, col1.y, col2.y,
-            col0.z, col1.z, col2.z
-          )
-          // 构建不含缩放的 Gizmo 矩阵
-          const gizmoMatrix = Matrix4.fromRotationTranslation(pureRotation, position, new Matrix4())
-          Matrix4.clone(gizmoMatrix, gizmo.modelMatrix)
+          // 提取位置（复用 scratch 变量）
+          Matrix4.getTranslation(resultMatrix, scratchPosition)
+          // 提取旋转矩阵并归一化以移除缩放（复用 scratch 变量）
+          Matrix4.getMatrix3(resultMatrix, scratchRotationWithScale)
+          Cartesian3.fromElements(scratchRotationWithScale[0], scratchRotationWithScale[1], scratchRotationWithScale[2], scratchCol0)
+          Cartesian3.fromElements(scratchRotationWithScale[3], scratchRotationWithScale[4], scratchRotationWithScale[5], scratchCol1)
+          Cartesian3.fromElements(scratchRotationWithScale[6], scratchRotationWithScale[7], scratchRotationWithScale[8], scratchCol2)
+          Cartesian3.normalize(scratchCol0, scratchCol0)
+          Cartesian3.normalize(scratchCol1, scratchCol1)
+          Cartesian3.normalize(scratchCol2, scratchCol2)
+          Matrix3.setColumn(scratchPureRotation, 0, scratchCol0, scratchPureRotation)
+          Matrix3.setColumn(scratchPureRotation, 1, scratchCol1, scratchPureRotation)
+          Matrix3.setColumn(scratchPureRotation, 2, scratchCol2, scratchPureRotation)
+          // 构建不含缩放的 Gizmo 矩阵（复用 scratch 变量）
+          Matrix4.fromRotationTranslation(scratchPureRotation, scratchPosition, scratchGizmoMatrix)
+          Matrix4.clone(scratchGizmoMatrix, gizmo.modelMatrix)
         }
       }
     }

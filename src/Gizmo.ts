@@ -1,17 +1,18 @@
 import type { Entity, Viewer } from 'cesium'
-import * as CesiumInternal from 'cesium'
 import {
   ArcType,
   AxisAlignedBoundingBox,
   BlendingState,
   BoxGeometry,
   BoxOutlineGeometry,
+  Cartesian2,
   Cartesian3,
   Math as CesiumMath,
   Color,
   ColorGeometryInstanceAttribute,
   CylinderGeometry,
   GeometryInstance,
+  HeadingPitchRoll,
   Material,
   MaterialAppearance,
   Matrix3,
@@ -21,6 +22,7 @@ import {
   PolylineGeometry,
   PolylineMaterialAppearance,
   Primitive,
+  Quaternion,
   Transforms,
 } from 'cesium'
 import { GizmoComponentPrimitive } from './GizmoComponentPrimitive'
@@ -66,10 +68,26 @@ export enum CoordinateMode {
   surface = 'surface', // 使用地表切线坐标系（ENU）
 }
 
+export type GizmoPointerMoveEvent =
+  | { mode: GizmoMode.translate; transMode: CoordinateMode.local; result: Cartesian3 }
+  | { mode: GizmoMode.translate; transMode: CoordinateMode.surface; result: Matrix4 }
+  | { mode: GizmoMode.rotate; coordinateMode: CoordinateMode.local | CoordinateMode.surface; result: HeadingPitchRoll }
+  | { mode: GizmoMode.scale; result: Matrix4 }
+
+export interface GizmoPointerBaseEvent {
+  screenPosition: Cartesian2
+  pickedPart: GizmoPart | null
+  mode: GizmoMode | null
+  coordinateMode: CoordinateMode | null
+}
+
+export type GizmoPointerDownEvent = GizmoPointerBaseEvent
+export type GizmoPointerUpEvent = GizmoPointerBaseEvent
+
 interface GizmoOptions {
-  onGizmoPointerDown?: (event: PointerEvent) => void
-  onGizmoPointerUp?: (event: PointerEvent) => void
-  onGizmoPointerMove?: (event: PointerEvent) => void
+  onGizmoPointerDown?: (event: GizmoPointerDownEvent) => void
+  onGizmoPointerUp?: (event: GizmoPointerUpEvent) => void
+  onGizmoPointerMove?: (event: GizmoPointerMoveEvent) => void
   // 包围盒显示选项
   showLocalBounds?: boolean // 显示模型空间边界，默认 false
   showWorldAABB?: boolean // 显示世界空间AABB，默认 false
@@ -97,9 +115,9 @@ export class Gizmo {
   _xzPlaneMaterial: Material
   _yzPlaneMaterial: Material
   _planeHighlightMaterial: Material
-  onGizmoPointerDown: ((event: PointerEvent) => void) | undefined
-  onGizmoPointerUp: ((event: PointerEvent) => void) | undefined
-  onGizmoPointerMove: ((event: PointerEvent) => void) | undefined
+  onGizmoPointerDown: ((event: GizmoPointerDownEvent) => void) | undefined
+  onGizmoPointerUp: ((event: GizmoPointerUpEvent) => void) | undefined
+  onGizmoPointerMove: ((event: GizmoPointerMoveEvent) => void) | undefined
   autoSyncMountedPrimitive: boolean
   _isInteracting: boolean
   _lastSyncedPosition: Cartesian3 | null
@@ -1005,17 +1023,7 @@ export class Gizmo {
     const transformToRoot = runtimeNode.transformToRoot || Matrix4.IDENTITY
 
     // 1.3 轴校正矩阵 - 尝试从 sceneGraph 获取，否则手动计算
-    let axisCorrectionMatrix: Matrix4
-    if (sceneGraph.axisCorrectionMatrix) {
-      axisCorrectionMatrix = sceneGraph.axisCorrectionMatrix
-    } else {
-      // 从 components 获取 upAxis 和 forwardAxis
-      const components = sceneGraph.components
-      const Axis = (CesiumInternal as any).Axis
-      const upAxis = components?.upAxis ?? Axis.Y  // 默认 Y-up (glTF 标准)
-      const forwardAxis = components?.forwardAxis ?? Axis.X  // 默认 X-forward
-      axisCorrectionMatrix = (CesiumInternal as any).ModelUtility.getAxisCorrectionMatrix(upAxis, forwardAxis)
-    }
+    const axisCorrectionMatrix = sceneGraph.axisCorrectionMatrix ?? Matrix4.IDENTITY
 
     // 1.4 组件变换（模型级别）
     const componentsTransform = sceneGraph.components?.transform || Matrix4.IDENTITY
@@ -1074,8 +1082,8 @@ export class Gizmo {
               ? new Cartesian3(gltfNode.translation[0], gltfNode.translation[1], gltfNode.translation[2])
               : Cartesian3.ZERO
             const rotation = gltfNode.rotation
-              ? new (CesiumInternal as any).Quaternion(gltfNode.rotation[0], gltfNode.rotation[1], gltfNode.rotation[2], gltfNode.rotation[3])
-              : (CesiumInternal as any).Quaternion.IDENTITY
+              ? new Quaternion(gltfNode.rotation[0], gltfNode.rotation[1], gltfNode.rotation[2], gltfNode.rotation[3])
+              : Quaternion.IDENTITY
             const scale = gltfNode.scale
               ? new Cartesian3(gltfNode.scale[0], gltfNode.scale[1], gltfNode.scale[2])
               : new Cartesian3(1, 1, 1)
@@ -1436,16 +1444,7 @@ export class Gizmo {
 
       if (sceneGraph) {
         // 获取轴校正矩阵
-        if (sceneGraph.axisCorrectionMatrix) {
-          axisCorrectionMatrix = sceneGraph.axisCorrectionMatrix
-        }
-        else if (sceneGraph.components) {
-          const components = sceneGraph.components
-          const Axis = (CesiumInternal as any).Axis
-          const upAxis = components?.upAxis ?? Axis.Y
-          const forwardAxis = components?.forwardAxis ?? Axis.X
-          axisCorrectionMatrix = (CesiumInternal as any).ModelUtility.getAxisCorrectionMatrix(upAxis, forwardAxis)
-        }
+        axisCorrectionMatrix = sceneGraph.axisCorrectionMatrix ?? Matrix4.IDENTITY
 
         // 获取组件变换
         if (sceneGraph.components?.transform) {
@@ -1497,8 +1496,8 @@ export class Gizmo {
               ? new Cartesian3(node.translation[0], node.translation[1], node.translation[2])
               : Cartesian3.ZERO
             const rotation = node.rotation
-              ? new (CesiumInternal as any).Quaternion(node.rotation[0], node.rotation[1], node.rotation[2], node.rotation[3])
-              : (CesiumInternal as any).Quaternion.IDENTITY
+              ? new Quaternion(node.rotation[0], node.rotation[1], node.rotation[2], node.rotation[3])
+              : Quaternion.IDENTITY
             const scale = node.scale
               ? new Cartesian3(node.scale[0], node.scale[1], node.scale[2])
               : new Cartesian3(1, 1, 1)
@@ -1811,17 +1810,7 @@ export class Gizmo {
       const transformToRoot = runtimeNode?.transformToRoot || Matrix4.IDENTITY
 
       // 获取轴校正矩阵
-      let axisCorrectionMatrix = Matrix4.IDENTITY
-      if (sceneGraph?.axisCorrectionMatrix) {
-        axisCorrectionMatrix = sceneGraph.axisCorrectionMatrix
-      }
-      else if (sceneGraph?.components) {
-        const components = sceneGraph.components
-        const Axis = (CesiumInternal as any).Axis
-        const upAxis = components?.upAxis ?? Axis.Y
-        const forwardAxis = components?.forwardAxis ?? Axis.X
-        axisCorrectionMatrix = (CesiumInternal as any).ModelUtility.getAxisCorrectionMatrix(upAxis, forwardAxis)
-      }
+      const axisCorrectionMatrix = sceneGraph._axisCorrectionMatrix || Matrix4.IDENTITY
 
       const componentsTransform = sceneGraph?.components?.transform || Matrix4.IDENTITY
       const modelScale = model.scale ?? 1
@@ -2012,7 +2001,9 @@ function calTransModelMatrix(axis: Cartesian3, translate: number): Matrix4 {
   }
   else if (Cartesian3.equals(axis, Cartesian3.negate(Cartesian3.UNIT_X, new Cartesian3()))) {
     const rotation = Matrix3.fromRotationY(CesiumMath.toRadians(-90))
-    const translation = Cartesian3.fromElements(-translate, +0.0001, 0)//TODO: 解决Z轴线渲染时Z-fighting问题
+    // 注意：Y 分量使用微小偏移 (+0.0001) 是为了避免 Cesium GeometryPipeline.splitLongitude 的边界条件错误
+    // 当 Y=0 时，几何体顶点可能与其他轴向的顶点产生退化情况，触发 "All attribute lists must have the same number of attributes" 错误
+    const translation = Cartesian3.fromElements(-translate, +0.0001, 0)
     Matrix4.setTranslation(modelMatrix, translation, modelMatrix)
     Matrix4.setRotation(modelMatrix, rotation, modelMatrix)
   }

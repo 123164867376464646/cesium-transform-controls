@@ -158,9 +158,9 @@ gizmo.setEnabled(false)  // 禁用交互（可见但不响应鼠标事件）
 
 ```typescript
 new Gizmo(options?: {
-  onGizmoPointerDown?: (event: PointerEvent) => void
-  onGizmoPointerUp?: (event: PointerEvent) => void
-  onGizmoPointerMove?: (event: any) => void
+  onGizmoPointerDown?: (event: GizmoPointerDownEvent) => void
+  onGizmoPointerUp?: (event: GizmoPointerUpEvent) => void
+  onGizmoPointerMove?: (event: GizmoPointerMoveEvent) => void
 })
 ```
 

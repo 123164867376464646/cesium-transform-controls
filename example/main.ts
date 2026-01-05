@@ -1,5 +1,5 @@
 import * as Cesium from 'cesium'
-import { CoordinateMode, Gizmo, GizmoMode } from 'cesium-transform-controls'
+import { CoordinateMode, Gizmo, GizmoMode, GizmoPointerDownEvent, GizmoPointerMoveEvent, GizmoPointerUpEvent } from 'cesium-transform-controls'
 
 declare const dat: any
 
@@ -84,9 +84,16 @@ const settings = {
 const gizmo = new Gizmo({
   showLocalBounds: settings.showLocalBounds,
   showWorldAABB: settings.showWorldAABB,
-  onGizmoPointerMove: (event: any) => {
+  onGizmoPointerMove: (event: GizmoPointerMoveEvent) => {
+    console.log('[Gizmo Move]', event)
     updateCoordinatesFromMatrix(gizmo._mountedPrimitive)
   },
+  onGizmoPointerDown: (event: GizmoPointerDownEvent) => {
+    console.log('[Gizmo Down]', event)
+  },
+  onGizmoPointerUp: (event: GizmoPointerUpEvent) => {
+    console.log('[Gizmo Up]', event)
+  }
 })
 gizmo.attach(viewer)
 gizmo.setMode(settings.transformMode as GizmoMode)
