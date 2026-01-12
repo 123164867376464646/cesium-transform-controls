@@ -6,7 +6,7 @@ export default defineConfig(({ mode }) => ({
   base: './',
   plugins: [cesium()],
   server: {
-    port: 3000,
+    port: 3001,
   },
   resolve: {
     alias: {

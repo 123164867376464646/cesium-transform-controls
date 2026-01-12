@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "cesium": "^1.135.0"
+    "cesium": "^1.137.0"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

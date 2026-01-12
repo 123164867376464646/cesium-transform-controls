@@ -26,7 +26,7 @@ import {
   Transforms,
 } from 'cesium'
 import { GizmoComponentPrimitive } from './GizmoComponentPrimitive'
-import { addPointerEventHandler, buildEntityLocator, computeCircle, removePointerEventHandler } from './utils'
+import { addPointerEventHandler, buildEntityLocator, computeCircle, getEntityGeometryInfo, removePointerEventHandler, type EntityGeometryInfo, type EntityGeometryType } from './utils'
 
 /**
  * 通用的实体定位器接口
@@ -43,6 +43,11 @@ interface MountedVirtualPrimitive {
   _isEntity?: boolean
   _entity?: Entity
   _entityLocator?: MountedEntityLocator
+  _entityGeometryType?: EntityGeometryType
+  _entityAnchor?: Cartesian3
+  _entityPositions?: Cartesian3[]
+  _entityHoles?: Cartesian3[][]
+  _entityStartGeometry?: EntityGeometryInfo
   _isNode?: boolean
   _node?: any
   _model?: any
@@ -769,7 +774,7 @@ export class Gizmo {
     const mounted = this._mountedPrimitive as MountedVirtualPrimitive
     if (mounted._isEntity) {
       const entity = this.resolveMountedEntity(mounted)
-      if (!entity || !entity.position || !this._viewer)
+      if (!entity || !this._viewer)
         return
 
       if (!mounted._entityLocator) {
@@ -777,7 +782,20 @@ export class Gizmo {
       }
 
       const time = this._viewer.clock?.currentTime
-      const position = entity.position.getValue(time)
+      let position = entity.position ? entity.position.getValue(time) : undefined
+      if (!position) {
+        position = mounted._entityAnchor
+      }
+      if (!position) {
+        const info = getEntityGeometryInfo(entity, time)
+        if (info) {
+          mounted._entityGeometryType = info.type
+          mounted._entityAnchor = Cartesian3.clone(info.anchor)
+          mounted._entityPositions = info.positions
+          mounted._entityHoles = info.holes
+          position = info.anchor
+        }
+      }
       if (!position)
         return
 
@@ -794,6 +812,7 @@ export class Gizmo {
         // 更新 Gizmo 位置
         const transform = Transforms.eastNorthUpToFixedFrame(position)
         Matrix4.clone(transform, this.modelMatrix)
+        Matrix4.clone(transform, mounted.modelMatrix)
 
         // 记录当前同步的位置
         this._lastSyncedPosition = Cartesian3.clone(position, this._lastSyncedPosition || new Cartesian3())
@@ -844,16 +863,30 @@ export class Gizmo {
     const mounted = this._mountedPrimitive as MountedVirtualPrimitive
     if (mounted._isEntity) {
       const entity = this.resolveMountedEntity(mounted)
-      if (!entity || !entity.position || !this._viewer)
+      if (!entity || !this._viewer)
         return
 
       const time = this._viewer.clock?.currentTime
-      const position = entity.position.getValue(time)
+      let position = entity.position ? entity.position.getValue(time) : undefined
+      if (!position) {
+        position = mounted._entityAnchor
+      }
+      if (!position) {
+        const info = getEntityGeometryInfo(entity, time)
+        if (info) {
+          mounted._entityGeometryType = info.type
+          mounted._entityAnchor = Cartesian3.clone(info.anchor)
+          mounted._entityPositions = info.positions
+          mounted._entityHoles = info.holes
+          position = info.anchor
+        }
+      }
       if (!position)
         return
 
       const transform = Transforms.eastNorthUpToFixedFrame(position)
       Matrix4.clone(transform, this.modelMatrix)
+      Matrix4.clone(transform, mounted.modelMatrix)
     }
     else if (mounted.modelMatrix) {
       Matrix4.clone(mounted.modelMatrix, this.modelMatrix)
@@ -874,7 +907,7 @@ export class Gizmo {
   }
 
   mountToEntity(entity: Entity, viewer?: Viewer | null) {
-    if (!entity || !entity.position)
+    if (!entity)
       return
 
     const currentViewer = viewer || this._viewer
@@ -882,16 +915,21 @@ export class Gizmo {
       return
 
     const time = currentViewer.clock?.currentTime
-    const position = entity.position.getValue(time)
-    if (!position)
+    const geometryInfo = getEntityGeometryInfo(entity, time)
+    if (!geometryInfo)
       return
 
+    const position = geometryInfo.anchor
     const transform = Transforms.eastNorthUpToFixedFrame(position)
     const virtualPrimitive: MountedVirtualPrimitive = {
       modelMatrix: transform.clone(),
       _isEntity: true,
       _entity: entity,
       _entityLocator: buildEntityLocator(entity),
+      _entityGeometryType: geometryInfo.type,
+      _entityAnchor: Cartesian3.clone(geometryInfo.anchor),
+      _entityPositions: geometryInfo.positions,
+      _entityHoles: geometryInfo.holes,
     }
 
     this._mountedPrimitive = virtualPrimitive as unknown as Primitive
@@ -1433,7 +1471,10 @@ export class Gizmo {
     try {
       const gltf = this._getGltfJson(model)
       if (!gltf || !gltf.nodes) {
-        console.warn('无法获取 glTF 数据')
+        const hasGltfHints = !!(model && (model._gltf || model._loader || model.loader || model._sceneGraph))
+        if (hasGltfHints) {
+          console.warn('无法获取 glTF 数据')
+        }
         return null
       }
 

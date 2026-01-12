@@ -1,6 +1,6 @@
 import type { ScreenSpaceEventHandler as SSEHandler, Viewer } from 'cesium'
 import type { Gizmo, MountedEntityLocator } from './Gizmo'
-import { BoundingSphere, Cartesian2, Cartesian3, Cartographic, Math as CesiumMath, ConstantPositionProperty, defined, Matrix3, Matrix4, Quaternion, SceneTransforms, ScreenSpaceEventHandler, ScreenSpaceEventType, Transforms } from 'cesium'
+import { BoundingSphere, Cartesian2, Cartesian3, Cartographic, Math as CesiumMath, ConstantPositionProperty, defined, Matrix3, Matrix4, PolygonHierarchy, Quaternion, SceneTransforms, ScreenSpaceEventHandler, ScreenSpaceEventType, Transforms } from 'cesium'
 import { GizmoMode, GizmoPart, CoordinateMode } from './Gizmo'
 
 // 虚拟 Primitive 接口，用于 Entity 适配
@@ -9,6 +9,20 @@ interface VirtualPrimitive {
   _isEntity: boolean
   _entity: any
   _entityLocator?: MountedEntityLocator
+  _entityGeometryType?: EntityGeometryType
+  _entityAnchor?: Cartesian3
+  _entityPositions?: Cartesian3[]
+  _entityHoles?: Cartesian3[][]
+  _entityStartGeometry?: EntityGeometryInfo
+}
+
+export type EntityGeometryType = 'position' | 'polyline' | 'polygon'
+
+export interface EntityGeometryInfo {
+  type: EntityGeometryType
+  anchor: Cartesian3
+  positions?: Cartesian3[]
+  holes?: Cartesian3[][]
 }
 
 /**
@@ -61,6 +75,180 @@ export function computeCircle(r: number) {
   return points
 }
 
+function getPropertyValue<T>(property: any, time?: any): T | undefined {
+  if (!property) {
+    return undefined
+  }
+  return typeof property.getValue === 'function' ? property.getValue(time) : property
+}
+
+function clonePositions(positions: Cartesian3[]): Cartesian3[] {
+  return positions.map(position => Cartesian3.clone(position))
+}
+
+function cloneHolePositions(holes?: any[]): Cartesian3[][] | undefined {
+  if (!holes || holes.length === 0) {
+    return undefined
+  }
+  const result: Cartesian3[][] = []
+  for (const hole of holes) {
+    const holePositions = Array.isArray(hole?.positions) ? hole.positions : Array.isArray(hole) ? hole : null
+    if (holePositions && holePositions.length > 0) {
+      result.push(clonePositions(holePositions))
+    }
+  }
+  return result.length > 0 ? result : undefined
+}
+
+export function getEntityGeometryInfo(entity: any, time?: any): EntityGeometryInfo | null {
+  if (!entity) {
+    return null
+  }
+
+  const polylinePositions = getPropertyValue<Cartesian3[]>(entity.polyline?.positions, time)
+  if (polylinePositions && polylinePositions.length > 0) {
+    const positions = clonePositions(polylinePositions)
+    const anchor = BoundingSphere.fromPoints(positions).center
+    return {
+      type: 'polyline',
+      anchor: Cartesian3.clone(anchor),
+      positions,
+    }
+  }
+
+  const hierarchy = getPropertyValue<PolygonHierarchy>(entity.polygon?.hierarchy, time)
+  if (hierarchy && Array.isArray(hierarchy.positions) && hierarchy.positions.length > 0) {
+    const positions = clonePositions(hierarchy.positions)
+    const holes = cloneHolePositions(hierarchy.holes)
+    const anchor = BoundingSphere.fromPoints(positions).center
+    return {
+      type: 'polygon',
+      anchor: Cartesian3.clone(anchor),
+      positions,
+      holes,
+    }
+  }
+
+  const position = getPropertyValue<Cartesian3>(entity.position, time)
+  if (position) {
+    return {
+      type: 'position',
+      anchor: Cartesian3.clone(position),
+    }
+  }
+
+  return null
+}
+
+function setEntityPosition(entity: any, position: Cartesian3) {
+  if (!entity) {
+    return
+  }
+  if (entity.position && typeof entity.position.setValue === 'function') {
+    entity.position.setValue(position)
+  } else {
+    entity.position = new ConstantPositionProperty(position)
+  }
+}
+
+function getEntityStartGeometry(mountedPrimitive: VirtualPrimitive, viewer: Viewer): EntityGeometryInfo | null {
+  if (mountedPrimitive._entityStartGeometry) {
+    return mountedPrimitive._entityStartGeometry
+  }
+  const entity = mountedPrimitive._entity
+  const time = viewer.clock?.currentTime
+  const info = getEntityGeometryInfo(entity, time)
+  if (info) {
+    mountedPrimitive._entityStartGeometry = info
+    mountedPrimitive._entityGeometryType = info.type
+    mountedPrimitive._entityAnchor = Cartesian3.clone(info.anchor)
+    if (info.positions) {
+      mountedPrimitive._entityPositions = clonePositions(info.positions)
+    }
+    if (info.holes) {
+      mountedPrimitive._entityHoles = info.holes.map(hole => clonePositions(hole))
+    }
+  }
+  return info
+}
+
+function updateEntityGeometry(
+  mountedPrimitive: VirtualPrimitive,
+  entity: any,
+  type: EntityGeometryType,
+  positions: Cartesian3[],
+  holes?: Cartesian3[][],
+  anchor?: Cartesian3,
+) {
+  if (type === 'polyline' && entity?.polyline) {
+    entity.polyline.positions = positions
+  } else if (type === 'polygon' && entity?.polygon) {
+    const holeHierarchies = holes?.map(holePositions => new PolygonHierarchy(holePositions))
+    entity.polygon.hierarchy = new PolygonHierarchy(positions, holeHierarchies)
+  }
+
+  if (anchor) {
+    setEntityPosition(entity, anchor)
+    mountedPrimitive._entityAnchor = Cartesian3.clone(anchor)
+  }
+
+  mountedPrimitive._entityPositions = positions
+  mountedPrimitive._entityHoles = holes
+}
+
+function getRotationMatrixNoScale(matrix: Matrix4, result: Matrix3): Matrix3 {
+  Matrix4.getMatrix3(matrix, result)
+  Cartesian3.fromElements(result[0], result[1], result[2], scratchCol0)
+  Cartesian3.fromElements(result[3], result[4], result[5], scratchCol1)
+  Cartesian3.fromElements(result[6], result[7], result[8], scratchCol2)
+  Cartesian3.normalize(scratchCol0, scratchCol0)
+  Cartesian3.normalize(scratchCol1, scratchCol1)
+  Cartesian3.normalize(scratchCol2, scratchCol2)
+  Matrix3.setColumn(result, 0, scratchCol0, result)
+  Matrix3.setColumn(result, 1, scratchCol1, result)
+  Matrix3.setColumn(result, 2, scratchCol2, result)
+  return result
+}
+
+function rotatePositions(
+  positions: Cartesian3[],
+  pivot: Cartesian3,
+  frameRotation: Matrix3,
+  rotationInFrame: Matrix3,
+): Cartesian3[] {
+  const inverseFrame = Matrix3.transpose(frameRotation, new Matrix3())
+  const result: Cartesian3[] = []
+  for (const position of positions) {
+    const local = Cartesian3.subtract(position, pivot, new Cartesian3())
+    const localInFrame = Matrix3.multiplyByVector(inverseFrame, local, new Cartesian3())
+    const rotatedLocal = Matrix3.multiplyByVector(rotationInFrame, localInFrame, new Cartesian3())
+    const rotatedWorld = Matrix3.multiplyByVector(frameRotation, rotatedLocal, new Cartesian3())
+    result.push(Cartesian3.add(rotatedWorld, pivot, new Cartesian3()))
+  }
+  return result
+}
+
+function scalePositions(
+  positions: Cartesian3[],
+  pivot: Cartesian3,
+  frameRotation: Matrix3,
+  scale: Cartesian3,
+): Cartesian3[] {
+  const inverseFrame = Matrix3.transpose(frameRotation, new Matrix3())
+  const result: Cartesian3[] = []
+  for (const position of positions) {
+    const local = Cartesian3.subtract(position, pivot, new Cartesian3())
+    const localInFrame = Matrix3.multiplyByVector(inverseFrame, local, new Cartesian3())
+    const scaledLocal = new Cartesian3(
+      localInFrame.x * scale.x,
+      localInFrame.y * scale.y,
+      localInFrame.z * scale.z,
+    )
+    const scaledWorld = Matrix3.multiplyByVector(frameRotation, scaledLocal, new Cartesian3())
+    result.push(Cartesian3.add(scaledWorld, pivot, new Cartesian3()))
+  }
+  return result
+}
 /**
  * 兼容性处理：世界坐标转屏幕坐标
  * 旧版本使用 SceneTransforms.wgs84ToWindowCoordinates
@@ -202,7 +390,7 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
           gizmo.mountToNode(node, model, viewer)
         }
         // 检查是否是Entity
-        else if (picked.id && picked.id.position) {
+        else if (picked.id && (picked.id.position || picked.id.polyline || picked.id.polygon)) {
           gizmo.mountToEntity(picked.id, viewer)
         }
         // 检查是否是Primitive（整个模型）
@@ -286,6 +474,10 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
             = gizmo._mountedPrimitive.modelMatrix.clone()
         }
 
+        if (gizmo._mountedPrimitive && (gizmo._mountedPrimitive as any)._isEntity) {
+          getEntityStartGeometry(gizmo._mountedPrimitive as VirtualPrimitive, viewer)
+        }
+
         gizmo._isInteracting = true
 
         if (typeof gizmo.onGizmoPointerDown === 'function') {
@@ -322,6 +514,9 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
       // 清除缩放操作的起始矩阵
       if (mountedPrimitive && (mountedPrimitive as any)._nodeStartMatrix) {
         delete (mountedPrimitive as any)._nodeStartMatrix
+      }
+      if (mountedPrimitive && (mountedPrimitive as any)._entityStartGeometry) {
+        delete (mountedPrimitive as any)._entityStartGeometry
       }
 
 
@@ -538,12 +733,34 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
         if (gizmo.applyTransformationToMountedPrimitive) {
           const mountedPrimitive = gizmo._mountedPrimitive
           if (mountedPrimitive && (mountedPrimitive as any)._isEntity) {
-            // 处理Entity的位置更新 - 使用 ConstantPositionProperty
             const entity = (mountedPrimitive as any)._entity
-            entity.position = new ConstantPositionProperty(translation.clone())
-            // 更新 Gizmo 的最后同步位置
-
-            gizmo._lastSyncedPosition = translation.clone()
+            const startGeometry = getEntityStartGeometry(mountedPrimitive as VirtualPrimitive, viewer)
+            if (startGeometry && startGeometry.type !== 'position' && startGeometry.positions) {
+              Cartesian3.subtract(translation, gizmoStartPos, scratchDeltaWorld)
+              const newPositions = startGeometry.positions.map(position =>
+                Cartesian3.add(position, scratchDeltaWorld, new Cartesian3()),
+              )
+              const newHoles = startGeometry.holes?.map(holePositions =>
+                holePositions.map(position =>
+                  Cartesian3.add(position, scratchDeltaWorld, new Cartesian3()),
+                ),
+              )
+              const newAnchor = Cartesian3.add(startGeometry.anchor, scratchDeltaWorld, new Cartesian3())
+              updateEntityGeometry(
+                mountedPrimitive as VirtualPrimitive,
+                entity,
+                startGeometry.type,
+                newPositions,
+                newHoles,
+                newAnchor,
+              )
+              Matrix4.clone(gizmo.modelMatrix, mountedPrimitive.modelMatrix)
+              gizmo._lastSyncedPosition = Cartesian3.clone(newAnchor, gizmo._lastSyncedPosition || new Cartesian3())
+            } else {
+              // 处理Entity的位置更新 - 使用 ConstantPositionProperty
+              setEntityPosition(entity, translation.clone())
+              gizmo._lastSyncedPosition = translation.clone()
+            }
           }
           else if (mountedPrimitive && (mountedPrimitive as any)._isNode) {
             // 处理节点的变换更新
@@ -730,12 +947,35 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
         if (gizmo.applyTransformationToMountedPrimitive) {
           const mountedPrimitive = gizmo._mountedPrimitive
           if (mountedPrimitive && (mountedPrimitive as any)._isEntity) {
-            // 处理Entity的位置更新 - 使用 ConstantPositionProperty
             const newPosition = Matrix4.getTranslation(resultMatrix, new Cartesian3())
             const entity = (mountedPrimitive as any)._entity
-            entity.position = new ConstantPositionProperty(newPosition)
-            // 更新 Gizmo 的最后同步位置
-            gizmo._lastSyncedPosition = newPosition.clone()
+            const startGeometry = getEntityStartGeometry(mountedPrimitive as VirtualPrimitive, viewer)
+            if (startGeometry && startGeometry.type !== 'position' && startGeometry.positions) {
+              Cartesian3.subtract(newPosition, gizmoStartPos, scratchDeltaWorld)
+              const newPositions = startGeometry.positions.map(position =>
+                Cartesian3.add(position, scratchDeltaWorld, new Cartesian3()),
+              )
+              const newHoles = startGeometry.holes?.map(holePositions =>
+                holePositions.map(position =>
+                  Cartesian3.add(position, scratchDeltaWorld, new Cartesian3()),
+                ),
+              )
+              const newAnchor = Cartesian3.add(startGeometry.anchor, scratchDeltaWorld, new Cartesian3())
+              updateEntityGeometry(
+                mountedPrimitive as VirtualPrimitive,
+                entity,
+                startGeometry.type,
+                newPositions,
+                newHoles,
+                newAnchor,
+              )
+              Matrix4.clone(resultMatrix, mountedPrimitive.modelMatrix)
+              gizmo._lastSyncedPosition = Cartesian3.clone(newAnchor, gizmo._lastSyncedPosition || new Cartesian3())
+            } else {
+              // 处理Entity的位置更新 - 使用 ConstantPositionProperty
+              setEntityPosition(entity, newPosition)
+              gizmo._lastSyncedPosition = newPosition.clone()
+            }
           }
           else if (mountedPrimitive && (mountedPrimitive as any)._isNode) {
             // 处理节点的变换更新（Surface 模式）
@@ -872,8 +1112,38 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
 
         if (gizmo.applyTransformationToMountedPrimitive) {
           if ((mountedPrimitive as any)._isEntity) {
-            const newPosition = Matrix4.getTranslation(resultMatrix, new Cartesian3())
-            gizmo._lastSyncedPosition = newPosition.clone()
+            const entity = (mountedPrimitive as any)._entity
+            const startGeometry = getEntityStartGeometry(mountedPrimitive as VirtualPrimitive, viewer)
+            if (startGeometry && startGeometry.type !== 'position' && startGeometry.positions) {
+              const frameRotation = getRotationMatrixNoScale(gizmoStartModelMatrix, scratchPureRotation)
+              const newPositions = rotatePositions(
+                startGeometry.positions,
+                gizmoStartPos,
+                frameRotation,
+                accumulatedRotation,
+              )
+              const newHoles = startGeometry.holes?.map(holePositions =>
+                rotatePositions(holePositions, gizmoStartPos, frameRotation, accumulatedRotation),
+              )
+              const anchor = Cartesian3.clone(startGeometry.anchor)
+              updateEntityGeometry(
+                mountedPrimitive as VirtualPrimitive,
+                entity,
+                startGeometry.type,
+                newPositions,
+                newHoles,
+                anchor,
+              )
+              Matrix4.getTranslation(resultMatrix, scratchPosition)
+              getRotationMatrixNoScale(resultMatrix, scratchPureRotation)
+              Matrix4.fromRotationTranslation(scratchPureRotation, scratchPosition, scratchGizmoMatrix)
+              Matrix4.clone(scratchGizmoMatrix, gizmo.modelMatrix)
+              Matrix4.clone(gizmo.modelMatrix, mountedPrimitive.modelMatrix)
+              gizmo._lastSyncedPosition = Cartesian3.clone(anchor, gizmo._lastSyncedPosition || new Cartesian3())
+            } else {
+              const newPosition = Matrix4.getTranslation(resultMatrix, new Cartesian3())
+              gizmo._lastSyncedPosition = newPosition.clone()
+            }
           }
           else if ((mountedPrimitive as any)._isNode) {
             // 子节点处理：使用帧间增量方式
@@ -977,8 +1247,38 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
 
         if (gizmo.applyTransformationToMountedPrimitive) {
           if ((mountedPrimitive as any)._isEntity) {
-            const newPosition = Matrix4.getTranslation(resultMatrix, new Cartesian3())
-            gizmo._lastSyncedPosition = newPosition.clone()
+            const entity = (mountedPrimitive as any)._entity
+            const startGeometry = getEntityStartGeometry(mountedPrimitive as VirtualPrimitive, viewer)
+            if (startGeometry && startGeometry.type !== 'position' && startGeometry.positions) {
+              const frameRotation = getRotationMatrixNoScale(rotateStartEnuMatrix, scratchPureRotation)
+              const newPositions = rotatePositions(
+                startGeometry.positions,
+                gizmoStartPos,
+                frameRotation,
+                accumulatedRotation,
+              )
+              const newHoles = startGeometry.holes?.map(holePositions =>
+                rotatePositions(holePositions, gizmoStartPos, frameRotation, accumulatedRotation),
+              )
+              const anchor = Cartesian3.clone(startGeometry.anchor)
+              updateEntityGeometry(
+                mountedPrimitive as VirtualPrimitive,
+                entity,
+                startGeometry.type,
+                newPositions,
+                newHoles,
+                anchor,
+              )
+              Matrix4.getTranslation(resultMatrix, scratchPosition)
+              getRotationMatrixNoScale(resultMatrix, scratchPureRotation)
+              Matrix4.fromRotationTranslation(scratchPureRotation, scratchPosition, scratchGizmoMatrix)
+              Matrix4.clone(scratchGizmoMatrix, gizmo.modelMatrix)
+              Matrix4.clone(gizmo.modelMatrix, mountedPrimitive.modelMatrix)
+              gizmo._lastSyncedPosition = Cartesian3.clone(anchor, gizmo._lastSyncedPosition || new Cartesian3())
+            } else {
+              const newPosition = Matrix4.getTranslation(resultMatrix, new Cartesian3())
+              gizmo._lastSyncedPosition = newPosition.clone()
+            }
           }
           else if ((mountedPrimitive as any)._isNode) {
             // 子节点 Surface 模式：使用帧间增量方式
@@ -1048,10 +1348,42 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
         const mountedPrimitive = gizmo._mountedPrimitive
 
         if (mountedPrimitive && (mountedPrimitive as any)._isEntity) {
-          // 对Entity应用缩放 - 需要保存原始尺寸来正确计算缩放
           const entity = (mountedPrimitive as any)._entity
-          if (entity.box && entity.box.dimensions) {
-            // 使用相对缩放而不是绝对缩放
+          const startGeometry = getEntityStartGeometry(mountedPrimitive as VirtualPrimitive, viewer)
+          if (startGeometry && startGeometry.type !== 'position' && startGeometry.positions) {
+            const frameRotation = getRotationMatrixNoScale(gizmoStartModelMatrix, scratchPureRotation)
+            const newPositions = scalePositions(
+              startGeometry.positions,
+              gizmoStartPos,
+              frameRotation,
+              scale,
+            )
+            const newHoles = startGeometry.holes?.map(holePositions =>
+              scalePositions(holePositions, gizmoStartPos, frameRotation, scale),
+            )
+            const anchor = Cartesian3.clone(startGeometry.anchor)
+            updateEntityGeometry(
+              mountedPrimitive as VirtualPrimitive,
+              entity,
+              startGeometry.type,
+              newPositions,
+              newHoles,
+              anchor,
+            )
+
+            const resultMatrix = Matrix4.multiplyByScale(
+              mountedPrimitiveStartModelMatrix,
+              scale,
+              scratchScaleMatrix,
+            )
+            Matrix4.getTranslation(resultMatrix, scratchPosition)
+            getRotationMatrixNoScale(resultMatrix, scratchPureRotation)
+            Matrix4.fromRotationTranslation(scratchPureRotation, scratchPosition, scratchGizmoMatrix)
+            Matrix4.clone(scratchGizmoMatrix, gizmo.modelMatrix)
+            Matrix4.clone(gizmo.modelMatrix, mountedPrimitive.modelMatrix)
+            gizmo._lastSyncedPosition = Cartesian3.clone(anchor, gizmo._lastSyncedPosition || new Cartesian3())
+          } else if (entity.box && entity.box.dimensions) {
+            // 对Entity应用缩放 - 需要保存原始尺寸来正确计算缩放
             if (!entity._originalDimensions) {
               entity._originalDimensions = entity.box.dimensions.getValue
                 ? entity.box.dimensions.getValue(gizmo._viewer?.clock.currentTime)
@@ -1062,7 +1394,16 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo) {
               entity._originalDimensions.y * scale.y,
               entity._originalDimensions.z * scale.z,
             )
-            entity.box.dimensions = newDimensions
+            const dimensionsRef = (entity as any)._gizmoDimensionsRef
+            if (dimensionsRef && typeof dimensionsRef.x === 'number') {
+              dimensionsRef.x = newDimensions.x
+              dimensionsRef.y = newDimensions.y
+              dimensionsRef.z = newDimensions.z
+            } else if (typeof entity.box.dimensions.setValue === 'function') {
+              entity.box.dimensions.setValue(newDimensions)
+            } else {
+              entity.box.dimensions = newDimensions
+            }
           }
         }
         else if (mountedPrimitive && (mountedPrimitive as any)._isNode) {

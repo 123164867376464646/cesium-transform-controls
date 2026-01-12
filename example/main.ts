@@ -37,6 +37,60 @@ const testEntity = viewer.entities.add({
   },
 })
 
+const testPolyline = viewer.entities.add({
+  name: 'Test Polyline',
+  polyline: {
+    positions: Cesium.Cartesian3.fromDegreesArray([
+      baseLon, baseLat,
+      baseLon + 0.01, baseLat + 0.005,
+      baseLon + 0.02, baseLat,
+    ]),
+    width: 4,
+    material: Cesium.Color.CYAN,
+  },
+})
+
+const testPolygon = viewer.entities.add({
+  name: 'Test Polygon',
+  polygon: {
+    hierarchy: Cesium.Cartesian3.fromDegreesArray([
+      baseLon - 0.005, baseLat - 0.005,
+      baseLon + 0.015, baseLat - 0.005,
+      baseLon + 0.015, baseLat + 0.01,
+      baseLon - 0.005, baseLat + 0.01,
+    ]),
+    material: Cesium.Color.YELLOW.withAlpha(0.35),
+    outline: true,
+    outlineColor: Cesium.Color.YELLOW,
+  },
+})
+
+const pointCollection = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection())
+pointCollection.add({
+  position: Cesium.Cartesian3.fromDegrees(baseLon + 0.008, baseLat + 0.003, baseHeight + 5),
+  color: Cesium.Color.MAGENTA,
+  pixelSize: 10,
+})
+pointCollection.add({
+  position: Cesium.Cartesian3.fromDegrees(baseLon - 0.006, baseLat + 0.002, baseHeight + 8),
+  color: Cesium.Color.LIME,
+  pixelSize: 12,
+})
+
+const testBoxDimensions = new Cesium.Cartesian3(20.0, 12.0, 10.0)
+
+const testBox = viewer.entities.add({
+  name: 'Test Box',
+  position: Cesium.Cartesian3.fromDegrees(baseLon + 0.0006, baseLat - 0.0003, baseHeight + 20),
+  box: {
+    dimensions: new Cesium.CallbackProperty(() => testBoxDimensions, false),
+    material: Cesium.Color.ORANGE.withAlpha(0.6),
+    outline: true,
+    outlineColor: Cesium.Color.ORANGE,
+  },
+})
+;(testBox as any)._gizmoDimensionsRef = testBoxDimensions
+
 model.readyEvent.addEventListener(() => {
   // const nodeName = 'wheel_FR_luaz_diffuse_0' //轮胎
   const nodeName = 'door_R_luaz_diffuse_0' //车门
@@ -180,6 +234,16 @@ coordsFolder.open()
 // 禁用输入框编辑
 nameController.domElement.style.pointerEvents = 'none'
 typeController.domElement.style.pointerEvents = 'none'
+
+lonController.onFinishChange(() => {
+  applyPositionFromGui()
+})
+latController.onFinishChange(() => {
+  applyPositionFromGui()
+})
+heightController.onFinishChange(() => {
+  applyPositionFromGui()
+})
 
 // 从 Gizmo 挂载的 primitive 获取模型类型
 function getMountedObjectType(mounted: any): string {
@@ -394,6 +458,132 @@ function updateCoordinatesFromMatrix(model: any) {
   settings.scaleX = (scale.x * uniformScale).toFixed(2)
   settings.scaleY = (scale.y * uniformScale).toFixed(2)
   settings.scaleZ = (scale.z * uniformScale).toFixed(2)
+}
+
+function applyPositionFromGui() {
+  const longitude = parseGuiNumber(settings.longitude)
+  const latitude = parseGuiNumber(settings.latitude)
+  const height = parseGuiNumber(settings.height)
+
+  if (longitude === null || latitude === null || height === null) {
+    return
+  }
+
+  const targetPosition = Cesium.Cartesian3.fromDegrees(longitude, latitude, height)
+  applyMountedWorldPosition(targetPosition)
+  const mounted = (gizmo as any)._mountedPrimitive
+  if (mounted) {
+    updateCoordinatesFromMatrix(mounted)
+  }
+}
+
+function parseGuiNumber(value: string) {
+  const parsed = Number.parseFloat(String(value))
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function applyMountedWorldPosition(targetPosition: Cesium.Cartesian3) {
+  const mounted = (gizmo as any)._mountedPrimitive
+  if (!mounted) {
+    return
+  }
+
+  if (mounted._isEntity) {
+    const entity = mounted._entity
+    if (entity) {
+      setEntityPosition(entity, targetPosition)
+      ;(gizmo as any)._lastSyncedPosition = targetPosition.clone()
+    }
+    gizmo.forceSyncFromMountedPrimitive()
+    return
+  }
+
+  if (mounted._isNode) {
+    applyWorldPositionToNode(mounted, targetPosition)
+    return
+  }
+
+  if (mounted.modelMatrix) {
+    const newGizmoMatrix = Cesium.Matrix4.clone(gizmo.modelMatrix, new Cesium.Matrix4())
+    Cesium.Matrix4.setTranslation(newGizmoMatrix, targetPosition, newGizmoMatrix)
+    Cesium.Matrix4.clone(newGizmoMatrix, gizmo.modelMatrix)
+
+    const newPrimitiveMatrix = Cesium.Matrix4.clone(mounted.modelMatrix, new Cesium.Matrix4())
+    Cesium.Matrix4.setTranslation(newPrimitiveMatrix, targetPosition, newPrimitiveMatrix)
+    mounted.modelMatrix = newPrimitiveMatrix
+  }
+}
+
+function setEntityPosition(entity: any, position: Cesium.Cartesian3) {
+  if (!entity) {
+    return
+  }
+  if (entity.position && typeof entity.position.setValue === 'function') {
+    entity.position.setValue(position)
+  } else {
+    entity.position = new Cesium.ConstantPositionProperty(position)
+  }
+}
+
+function getRuntimeNode(node: any) {
+  if (!node) {
+    return null
+  }
+  if (node._runtimeNode) {
+    return node._runtimeNode
+  }
+  if (node.transform !== undefined || node.transformToRoot !== undefined) {
+    return node
+  }
+  return null
+}
+
+function applyWorldPositionToNode(mounted: any, targetPosition: Cesium.Cartesian3) {
+  const currentPosition = Cesium.Matrix4.getTranslation(mounted.modelMatrix, new Cesium.Cartesian3())
+  const deltaWorld = Cesium.Cartesian3.subtract(targetPosition, currentPosition, new Cesium.Cartesian3())
+
+  if (Cesium.Cartesian3.equalsEpsilon(deltaWorld, Cesium.Cartesian3.ZERO, 1e-6)) {
+    return
+  }
+
+  const node = mounted._node
+  const model = mounted._model
+  if (!node || !model) {
+    return
+  }
+
+  const runtimeNode = getRuntimeNode(node)
+  const sceneGraph = mounted._sceneGraph || model._sceneGraph
+  const axisCorrectionMatrix = mounted._axisCorrectionMatrix || Cesium.Matrix4.IDENTITY
+
+  const nodeTransform = runtimeNode?.transform || node.matrix || Cesium.Matrix4.IDENTITY
+  const transformToRoot = runtimeNode?.transformToRoot || Cesium.Matrix4.IDENTITY
+  const componentsTransform = sceneGraph?.components?.transform || Cesium.Matrix4.IDENTITY
+  const modelScale = model.scale ?? 1
+
+  const step1 = Cesium.Matrix4.multiply(transformToRoot, nodeTransform, new Cesium.Matrix4())
+  const step2 = Cesium.Matrix4.multiply(axisCorrectionMatrix, step1, new Cesium.Matrix4())
+  const step3 = Cesium.Matrix4.multiply(componentsTransform, step2, new Cesium.Matrix4())
+  const step4 = modelScale !== 1
+    ? Cesium.Matrix4.multiply(Cesium.Matrix4.fromUniformScale(modelScale), step3, new Cesium.Matrix4())
+    : step3
+  const nodeWorldMatrix = Cesium.Matrix4.multiply(model.modelMatrix, step4, new Cesium.Matrix4())
+
+  const inverseNodeWorld = Cesium.Matrix4.inverse(nodeWorldMatrix, new Cesium.Matrix4())
+  const deltaInNode = Cesium.Matrix4.multiplyByPointAsVector(inverseNodeWorld, deltaWorld, new Cesium.Cartesian3())
+
+  const translationMatrix = Cesium.Matrix4.fromTranslation(deltaInNode, new Cesium.Matrix4())
+  const newNodeMatrix = Cesium.Matrix4.multiply(nodeTransform, translationMatrix, new Cesium.Matrix4())
+
+  node.matrix = Cesium.Matrix4.clone(newNodeMatrix, node.matrix || new Cesium.Matrix4())
+  if (runtimeNode) {
+    runtimeNode.transform = Cesium.Matrix4.clone(newNodeMatrix, runtimeNode.transform || new Cesium.Matrix4())
+  }
+
+  const newGizmoMatrix = Cesium.Matrix4.clone(mounted.modelMatrix, new Cesium.Matrix4())
+  Cesium.Matrix4.setTranslation(newGizmoMatrix, targetPosition, newGizmoMatrix)
+  mounted.modelMatrix = newGizmoMatrix
+  Cesium.Matrix4.clone(newGizmoMatrix, gizmo.modelMatrix)
 }
 
 window.addEventListener('beforeunload', () => {
