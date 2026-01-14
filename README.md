@@ -168,7 +168,7 @@ new Gizmo(options?: {
 
 | 方法 | 说明 |
 |------|------|
-| `attach(viewer)` | 附加到 Cesium Viewer |
+| `attach(viewer, isLeftClick?: boolean)` | 附加到 Cesium Viewer, isLeftClick 是否使用左键触发操作（默认 true）,即默认点击左键触发节点绑定操作 |
 | `detach()` | 从 Viewer 移除 |
 | `mountToPrimitive(primitive, viewer)` | 挂载到 Primitive |
 | `mountToEntity(entity, viewer)` | 挂载到 Entity |
