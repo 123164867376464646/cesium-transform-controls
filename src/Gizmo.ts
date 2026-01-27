@@ -1242,7 +1242,7 @@ export class Gizmo {
 
     this.setMode(GizmoMode.translate)
     this.coordinateMode = CoordinateMode.local
-    addPointerEventHandler(this._viewer, isLeftClick, this)
+    addPointerEventHandler(this._viewer, this, isLeftClick)
   }
 
   // 必须在viewer销毁之前调用

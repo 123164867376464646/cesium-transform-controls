@@ -163,13 +163,13 @@ let rotateStartEnuMatrix = new Matrix4()  // Surface 模式起始 ENU 矩阵
 /**
  * 添加指针事件处理程序到 Cesium Viewer
  * @param {Viewer} viewer - Cesium Viewer 实例
- * @param {boolean} isLeftClick - 是否使用左键触发操作（默认 true）,即默认点击左键触发节点绑定操作
  * @param {Gizmo} gizmo - 要挂载的 Gizmo 实例
+ * @param {boolean} isLeftClick - 是否使用左键触发操作（默认 true）,即默认点击左键触发节点绑定操作
  */
-export function addPointerEventHandler(viewer: Viewer, isLeftClick: boolean = true, gizmo: Gizmo) {
+export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo, isLeftClick: boolean = true) {
   handler = new ScreenSpaceEventHandler(viewer.canvas)
 
-  if(isLeftClick){
+  if (isLeftClick) {
     handler.setInputAction((movement: SSEHandler.PositionedEvent) => {
     // 检查 Gizmo 是否启用
     if (!gizmo.enabled)
