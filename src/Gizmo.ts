@@ -1206,8 +1206,12 @@ export class Gizmo {
     }
   }
 
-
-  attach(viewer: Viewer) {
+  /**
+   * 挂载 Gizmo 到 Cesium Viewer
+   * @param viewer Cesium Viewer 实例
+   * @param isLeftClick 是否使用左键触发操作（默认 true）,即默认点击左键触发节点绑定操作
+   */
+  attach(viewer: Viewer, isLeftClick: boolean = true) {
     this._viewer = viewer
     if (this._transPrimitives) {
       this._viewer.scene.primitives.add(this._transPrimitives)
@@ -1238,7 +1242,7 @@ export class Gizmo {
 
     this.setMode(GizmoMode.translate)
     this.coordinateMode = CoordinateMode.local
-    addPointerEventHandler(this._viewer, this)
+    addPointerEventHandler(this._viewer, this, isLeftClick)
   }
 
   // 必须在viewer销毁之前调用
