@@ -93,6 +93,11 @@ interface GizmoOptions {
   showWorldAABB?: boolean // 显示世界空间AABB，默认 false
   localBoundsColor?: Color // LocalBounds 颜色，默认 ORANGE
   worldAABBColor?: Color // WorldAABB 颜色，默认 CYAN
+  /**
+   * 是否使用左键触发操作（默认 true）
+   * 即默认点击左键触发节点绑定操作
+   */
+  isLeftClick?: boolean
 }
 
 export class Gizmo {
@@ -133,6 +138,7 @@ export class Gizmo {
   // 缓存相关属性
   _cachedModelBounds: { min: Cartesian3, max: Cartesian3 } | null
   _lastBoundingBoxUpdateMatrix: Matrix4 | null
+  _isLeftClick: boolean
 
   constructor(options?: GizmoOptions) {
     options = options || {}
@@ -198,6 +204,7 @@ export class Gizmo {
     this._currentBounds = null
     this._cachedModelBounds = null
     this._lastBoundingBoxUpdateMatrix = null
+    this._isLeftClick = options.isLeftClick ?? true
 
     this.createGizmoPrimitive()
   }
@@ -1209,9 +1216,8 @@ export class Gizmo {
   /**
    * 挂载 Gizmo 到 Cesium Viewer
    * @param viewer Cesium Viewer 实例
-   * @param isLeftClick 是否使用左键触发操作（默认 true）,即默认点击左键触发节点绑定操作
    */
-  attach(viewer: Viewer, isLeftClick: boolean = true) {
+  attach(viewer: Viewer) {
     this._viewer = viewer
     if (this._transPrimitives) {
       this._viewer.scene.primitives.add(this._transPrimitives)
@@ -1242,7 +1248,7 @@ export class Gizmo {
 
     this.setMode(GizmoMode.translate)
     this.coordinateMode = CoordinateMode.local
-    addPointerEventHandler(this._viewer, this, isLeftClick)
+    addPointerEventHandler(this._viewer, this, this._isLeftClick)
   }
 
   // 必须在viewer销毁之前调用

@@ -2,6 +2,8 @@
 
 Cesium 3D 变换控制器，为 Cesium 实体和模型提供可视化的平移、旋转、缩放操作。
 
+> 📚 **深入源码**：访问 [DeepWiki](https://deepwiki.com/123164867376464646/cesium-transform-controls) 查看本项目的 AI 深度代码解析与架构文档。
+
 ![image.png](image.webp)
 
 ## 功能特性
@@ -161,6 +163,11 @@ new Gizmo(options?: {
   onGizmoPointerDown?: (event: GizmoPointerDownEvent) => void
   onGizmoPointerUp?: (event: GizmoPointerUpEvent) => void
   onGizmoPointerMove?: (event: GizmoPointerMoveEvent) => void
+  /** 
+   * 是否使用左键触发操作（默认 true）
+   * 即默认点击左键触发节点绑定操作 
+   */
+  isLeftClick?: boolean
 })
 ```
 
@@ -168,7 +175,7 @@ new Gizmo(options?: {
 
 | 方法 | 说明 |
 |------|------|
-| `attach(viewer, isLeftClick?: boolean)` | 附加到 Cesium Viewer, isLeftClick 是否使用左键触发操作（默认 true）,即默认点击左键触发节点绑定操作 |
+| `attach(viewer)` | 附加到 Cesium Viewer |
 | `detach()` | 从 Viewer 移除 |
 | `mountToPrimitive(primitive, viewer)` | 挂载到 Primitive |
 | `mountToEntity(entity, viewer)` | 挂载到 Entity |
