@@ -2,7 +2,7 @@
 
 Cesium 3D 变换控制器，为 Cesium 实体和模型提供可视化的平移、旋转、缩放操作。
 
-> 📚 **深入源码**：访问 [DeepWiki](https://deepwiki.com/123164867376464646/cesium-transform-controls) 查看本项目的 AI 深度代码解析与架构文档。
+> 📚 **深入源码**：访问 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/123164867376464646/cesium-transform-controls) 查看本项目的 AI 深度代码解析与架构文档。
 
 ![image.png](image.webp)
 
@@ -202,6 +202,18 @@ gizmo.detach()  // 此时 viewer 已被销毁，会报错
 ```
 
 **原因**：`gizmo.detach()` 需要访问 `viewer.scene.primitives` 来移除 Gizmo 的图形元素，如果 `viewer` 已经被销毁，会导致空引用错误。
+
+#### 注意事项 (Known Issues & Limitations)
+
+1. **3D Tiles 的拾取限制**
+   - **现象**：当使用 Gizmo 移动 3D Tiles 内的子模型（Node）并将其移出原始包围盒（Bounding Volume）范围后，可能会出现无法再次点击选中（Pick）该节点的情况。
+   - **原因**：Cesium 的拾取机制依赖于 3D Tiles 的空间索引（Bounding Volume Hierarchy）。目前 Gizmo 修改节点位置（`modelMatrix`）后，并不会（也无法）自动更新 Tileset 的空间索引包围盒。
+   - **解决方案**：此问题是 3D Tiles 规范及 Cesium 引擎机制导致的。如遇到此情况，建议改用 **代码手动挂载** 的方式（`gizmo.mountToNode`），而不是依赖点击拾取。
+   - **关于 _gltfJson**：部分 3D Tiles 可能会丢失 `_gltfJson` 原始数据，虽然控制台可能会有相关警告，但这**不影响** Gizmo 对节点的控制功能。
+
+2. **Entity 支持限制**
+   - 目前 `Entity` 仅完整支持 `translate` (平移) 模式。
+   - `rotate` 和 `scale` 模式在 Entity 上暂未完全支持（或行为未定义），建议仅在 `Primitive/Model` 上使用完整的变换功能。
 
 #### 枚举
 

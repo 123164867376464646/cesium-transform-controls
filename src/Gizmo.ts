@@ -144,6 +144,7 @@ export class Gizmo {
   _cachedModelBounds: { min: Cartesian3, max: Cartesian3 } | null
   _lastBoundingBoxUpdateMatrix: Matrix4 | null
   _isLeftClick: boolean
+  private static _warnedModels = new WeakSet<any>()
 
   constructor(options?: GizmoOptions) {
     options = options || {}
@@ -212,6 +213,23 @@ export class Gizmo {
     this._isLeftClick = options.isLeftClick ?? true
 
     this.createGizmoPrimitive()
+  }
+
+  get isLeftClick(): boolean {
+    return this._isLeftClick
+  }
+
+  set isLeftClick(value: boolean) {
+    if (this._isLeftClick === value)
+      return
+
+    this._isLeftClick = value
+
+    // 如果已经 attach 到 viewer，需要重新绑定事件处理函数
+    if (this._viewer) {
+      removePointerEventHandler()
+      addPointerEventHandler(this._viewer, this, this._isLeftClick)
+    }
   }
 
   createGizmoPrimitive() {
@@ -948,9 +966,12 @@ export class Gizmo {
     this._resetBoundingBoxCache()
 
     // 挂载完成后刷新显示状态
-    if (this.mode) {
-      this.setMode(this.mode)
+    // Entity 仅支持 Translate 模式
+    if (this.mode !== GizmoMode.translate) {
+      console.warn('Entity only supports Translate mode. Switching to Translate mode.')
+      this.mode = GizmoMode.translate
     }
+    this.setMode(this.mode)
   }
 
   /**
@@ -1339,6 +1360,14 @@ export class Gizmo {
     if (!this._transPrimitives || !this._rotatePrimitives || !this._scalePrimitives)
       return
 
+    // Entity 仅支持 Translate 模式
+    if (this._mountedPrimitive && (this._mountedPrimitive as any)._isEntity) {
+      if (mode !== GizmoMode.translate) {
+        console.warn('Entity only supports Translate mode.')
+        mode = GizmoMode.translate
+      }
+    }
+
     // 先隐藏所有模式的 primitives
     this._transPrimitives._show = false
     this._rotatePrimitives._show = false
@@ -1482,8 +1511,9 @@ export class Gizmo {
       const gltf = this._getGltfJson(model)
       if (!gltf || !gltf.nodes) {
         const hasGltfHints = !!(model && (model._gltf || model._loader || model.loader || model._sceneGraph))
-        if (hasGltfHints) {
-          console.warn('无法获取 glTF 数据')
+        if (hasGltfHints && !Gizmo._warnedModels.has(model)) {
+          console.warn('无法获取 glTF 数据', model)
+          Gizmo._warnedModels.add(model)
         }
         return null
       }

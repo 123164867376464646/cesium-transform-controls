@@ -15,5 +15,5 @@
     },
     "baseUrl": "./"
   },
-  "include": ["*.ts", "../src/**/*"]
+  "include": ["**/*.ts", "../src/**/*"]
 }
