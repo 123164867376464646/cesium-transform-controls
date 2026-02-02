@@ -8,9 +8,9 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/cesium-transform-controls.es.js",
-      "require": "./dist/cesium-transform-controls.umd.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/cesium-transform-controls.umd.js"
     }
   },
   "files": [
