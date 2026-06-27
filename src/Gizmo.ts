@@ -73,10 +73,44 @@ export enum CoordinateMode {
   surface = 'surface', // 使用地表切线坐标系（ENU）
 }
 
+const GIZMO_MODE_PARTS: Record<GizmoMode, readonly GizmoPart[]> = {
+  [GizmoMode.translate]: [
+    GizmoPart.xAxis,
+    GizmoPart.yAxis,
+    GizmoPart.zAxis,
+    GizmoPart.xyPlane,
+    GizmoPart.xzPlane,
+    GizmoPart.yzPlane,
+  ],
+  [GizmoMode.rotate]: [
+    GizmoPart.xAxis,
+    GizmoPart.yAxis,
+    GizmoPart.zAxis,
+  ],
+  [GizmoMode.scale]: [
+    GizmoPart.xAxis,
+    GizmoPart.yAxis,
+    GizmoPart.zAxis,
+    GizmoPart.xyPlane,
+    GizmoPart.xzPlane,
+    GizmoPart.yzPlane,
+  ],
+}
+
+type GizmoAxisState = Record<GizmoMode, Partial<Record<GizmoPart, boolean>>>
+
+function createGizmoAxisState(): GizmoAxisState {
+  return {
+    [GizmoMode.translate]: {},
+    [GizmoMode.rotate]: {},
+    [GizmoMode.scale]: {},
+  }
+}
+
 export type GizmoPointerMoveEvent =
   | { mode: GizmoMode.translate; transMode: CoordinateMode.local; result: Cartesian3 }
   | { mode: GizmoMode.translate; transMode: CoordinateMode.surface; result: Matrix4 }
-  | { mode: GizmoMode.rotate; coordinateMode: CoordinateMode.local | CoordinateMode.surface; result: HeadingPitchRoll }
+  | { mode: GizmoMode.rotate; coordinateMode: CoordinateMode.local | CoordinateMode.surface; pickedPart: GizmoPart | null; deltaAngleRadians?: number; result: HeadingPitchRoll }
   | { mode: GizmoMode.scale; result: Matrix4 }
 
 export interface GizmoPointerBaseEvent {
@@ -116,6 +150,8 @@ export class Gizmo {
   _transPrimitives: GizmoComponentPrimitive | null
   _rotatePrimitives: GizmoComponentPrimitive | null
   _scalePrimitives: GizmoComponentPrimitive | null
+  private _axisVisible: GizmoAxisState
+  private _axisEnabled: GizmoAxisState
   _xMaterial: Material
   _yMaterial: Material
   _zMaterial: Material
@@ -161,6 +197,8 @@ export class Gizmo {
     this._transPrimitives = null
     this._rotatePrimitives = null
     this._scalePrimitives = null
+    this._axisVisible = createGizmoAxisState()
+    this._axisEnabled = createGizmoAxisState()
 
     // 0.99 for translucent PASS
     this._xMaterial = Material.fromType('Color', {
@@ -446,6 +484,11 @@ export class Gizmo {
       yTransPrimitive,
       zTransPrimitive,
     )
+    transPrimitive._partIds.push(
+      GizmoPart.xAxis,
+      GizmoPart.yAxis,
+      GizmoPart.zAxis,
+    )
     this._transPrimitives = transPrimitive
     this._transPrimitives._show = false
 
@@ -545,6 +588,11 @@ export class Gizmo {
       xRotatePrimitive,
       yRotatePrimitive,
       zRotatePrimitive,
+    )
+    rotatePrimitive._partIds.push(
+      GizmoPart.xAxis,
+      GizmoPart.yAxis,
+      GizmoPart.zAxis,
     )
     this._rotatePrimitives = rotatePrimitive
 
@@ -665,6 +713,11 @@ export class Gizmo {
       yScalePrimitive,
       zScalePrimitive,
     )
+    scalePrimitive._partIds.push(
+      GizmoPart.xAxis,
+      GizmoPart.yAxis,
+      GizmoPart.zAxis,
+    )
     this._scalePrimitives = scalePrimitive
 
     // * create helper lines for scale mode
@@ -783,7 +836,9 @@ export class Gizmo {
 
     // 将平面图元存储在平移和缩放组件中
     transPrimitive._part.push(xyPlanePrimitive, xzPlanePrimitive, yzPlanePrimitive)
+    transPrimitive._partIds.push(GizmoPart.xyPlane, GizmoPart.xzPlane, GizmoPart.yzPlane)
     scalePrimitive._part.push(xyPlanePrimitive, xzPlanePrimitive, yzPlanePrimitive)
+    scalePrimitive._partIds.push(GizmoPart.xyPlane, GizmoPart.xzPlane, GizmoPart.yzPlane)
   }
 
   /**
@@ -1356,6 +1411,85 @@ export class Gizmo {
     )
   }
 
+  private getPrimitivesByMode(mode: GizmoMode): GizmoComponentPrimitive | null {
+    if (mode === GizmoMode.translate) {
+      return this._transPrimitives
+    }
+    if (mode === GizmoMode.rotate) {
+      return this._rotatePrimitives
+    }
+    return this._scalePrimitives
+  }
+
+  private normalizeAxisParts(part: GizmoPart | GizmoPart[]): GizmoPart[] {
+    return Array.isArray(part) ? part : [part]
+  }
+
+  private supportsAxisPart(mode: GizmoMode, part: GizmoPart): boolean {
+    return GIZMO_MODE_PARTS[mode].includes(part)
+  }
+
+  private syncAxisVisibility(mode: GizmoMode) {
+    const primitives = this.getPrimitivesByMode(mode)
+    if (!primitives || !primitives._show) {
+      return
+    }
+
+    for (let i = 0; i < primitives._part.length; i++) {
+      const partId = primitives._partIds[i]
+      if (partId) {
+        primitives._part[i].show = this.getAxisVisible(mode, partId)
+      }
+    }
+  }
+
+  /**
+   * Show or hide gizmo axes/planes in a specific mode.
+   */
+  setAxisVisible(mode: GizmoMode, part: GizmoPart | GizmoPart[], visible: boolean): void {
+    for (const partId of this.normalizeAxisParts(part)) {
+      if (this.supportsAxisPart(mode, partId)) {
+        this._axisVisible[mode][partId] = visible
+      }
+    }
+
+    this.syncAxisVisibility(mode)
+    if (this.mode === mode && !visible) {
+      this.setHelperLineVisible(null)
+    }
+  }
+
+  getAxisVisible(mode: GizmoMode, part: GizmoPart): boolean {
+    if (!this.supportsAxisPart(mode, part)) {
+      return false
+    }
+
+    return this._axisVisible[mode][part] ?? true
+  }
+
+  /**
+   * Enable or disable picking/dragging for gizmo axes/planes in a specific mode.
+   */
+  setAxisEnabled(mode: GizmoMode, part: GizmoPart | GizmoPart[], enabled: boolean): void {
+    for (const partId of this.normalizeAxisParts(part)) {
+      if (this.supportsAxisPart(mode, partId)) {
+        this._axisEnabled[mode][partId] = enabled
+      }
+    }
+
+    if (this.mode === mode && !enabled) {
+      this.setHelperLineVisible(null)
+    }
+  }
+
+  getAxisEnabled(mode: GizmoMode, part: GizmoPart): boolean {
+    if (!this.supportsAxisPart(mode, part)) {
+      return false
+    }
+
+    return this._axisEnabled[mode][part] ?? true
+  }
+
   setMode(mode: GizmoMode) {
     if (!this._transPrimitives || !this._rotatePrimitives || !this._scalePrimitives)
       return
@@ -1392,6 +1526,8 @@ export class Gizmo {
     else if (mode === GizmoMode.scale) {
       this._scalePrimitives._show = true
     }
+
+    this.syncAxisVisibility(mode)
   }
 
   /**
@@ -1423,6 +1559,10 @@ export class Gizmo {
     const axisIds = Array.isArray(axisId) ? axisId : [axisId]
 
     for (const id of axisIds) {
+      if (!id || !this.mode || !this.getAxisVisible(this.mode, id) || !this.getAxisEnabled(this.mode, id)) {
+        continue
+      }
+
       // 显示特定的辅助线
       if (id === GizmoPart.xAxis) {
         currentPrimitives._helper[0].show = true

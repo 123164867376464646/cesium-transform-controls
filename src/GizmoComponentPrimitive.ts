@@ -1,12 +1,13 @@
 import type { Primitive } from 'cesium'
 import type { Gizmo } from './Gizmo'
 import { Cartesian3, destroyObject, Matrix4, Transforms } from 'cesium'
-import { GizmoMode, CoordinateMode } from './Gizmo'
+import { GizmoMode, CoordinateMode, GizmoPart } from './Gizmo'
 import { getScaleForMinimumSize } from './minPixelSizeScaler'
 
 export class GizmoComponentPrimitive {
   _gizmo: Gizmo
   _part: Primitive[]
+  _partIds: GizmoPart[]
   _helper: Primitive[]
   _show: boolean
   _scale: number
@@ -15,6 +16,7 @@ export class GizmoComponentPrimitive {
   constructor(gizmo: Gizmo, mode: GizmoMode) {
     this._gizmo = gizmo
     this._part = [] // [x轴, y轴, z轴]
+    this._partIds = []
     this._helper = [] // 辅助线 [x轴, y轴, z轴]
     this._show = true
     this._scale = 1
@@ -80,7 +82,13 @@ export class GizmoComponentPrimitive {
     }
 
 
-    for (const p of this._part) {
+    for (let i = 0; i < this._part.length; i++) {
+      const p = this._part[i]
+      const partId = this._partIds[i]
+      p.show = partId ? this._gizmo.getAxisVisible(this._mode, partId) : true
+      if (!p.show) {
+        continue
+      }
       p.modelMatrix = this._scaleMatrix
       // @ts-expect-error - Cesium Primitive.update() actually accepts frameState internally
       p.update(frameState)
@@ -111,6 +119,7 @@ export class GizmoComponentPrimitive {
       }
     }
     this._part = []
+    this._partIds = []
 
     // 销毁 _helper 数组中的所有对象（如果有）
     for (const h of this._helper) {

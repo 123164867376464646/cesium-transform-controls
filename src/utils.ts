@@ -89,6 +89,27 @@ export function computeCircle(r: number) {
   return points
 }
 
+function isGizmoPartId(id: any): id is GizmoPart {
+  return id === GizmoPart.xAxis
+    || id === GizmoPart.yAxis
+    || id === GizmoPart.zAxis
+    || id === GizmoPart.xyPlane
+    || id === GizmoPart.xzPlane
+    || id === GizmoPart.yzPlane
+}
+
+function getPickableGizmoPart(gizmo: Gizmo, picked: any): GizmoPart | null {
+  if (!defined(picked) || !isGizmoPartId(picked.id) || !gizmo.mode) {
+    return null
+  }
+
+  if (!gizmo.getAxisVisible(gizmo.mode, picked.id) || !gizmo.getAxisEnabled(gizmo.mode, picked.id)) {
+    return null
+  }
+
+  return picked.id
+}
+
 function getPropertyValue<T>(property: any, time?: any): T | undefined {
   if (!property) {
     return undefined
@@ -629,16 +650,10 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo, isLeftClick
 
     const picked = viewer.scene.pick(movement.position)
     if (defined(picked)) {
-      if (
-        picked.id === GizmoPart.xAxis
-        || picked.id === GizmoPart.yAxis
-        || picked.id === GizmoPart.zAxis
-        || picked.id === GizmoPart.xyPlane
-        || picked.id === GizmoPart.xzPlane
-        || picked.id === GizmoPart.yzPlane
-      ) {
+      const pickedPart = getPickableGizmoPart(gizmo, picked)
+      if (pickedPart) {
         // 选中 Gizmo
-        pickedGizmoId = picked.id
+        pickedGizmoId = pickedPart
 
         // 保存原始相机事件类型配置
         const controller = viewer.scene.screenSpaceCameraController
@@ -770,30 +785,31 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo, isLeftClick
 
     if (!pickedGizmoId) {
       const hovered = viewer.scene.pick(movement.endPosition)
+      const hoveredPart = getPickableGizmoPart(gizmo, hovered)
       const xMaterial
-        = defined(hovered) && (hovered.id === GizmoPart.xAxis)
+        = hoveredPart === GizmoPart.xAxis
           ? gizmo._highlightMaterial
           : gizmo._xMaterial
       const yMaterial
-        = defined(hovered) && (hovered.id === GizmoPart.yAxis)
+        = hoveredPart === GizmoPart.yAxis
           ? gizmo._highlightMaterial
           : gizmo._yMaterial
       const zMaterial
-        = defined(hovered) && (hovered.id === GizmoPart.zAxis)
+        = hoveredPart === GizmoPart.zAxis
           ? gizmo._highlightMaterial
           : gizmo._zMaterial
 
       // 平面材质
       const xyPlaneMaterial
-        = defined(hovered) && hovered.id === GizmoPart.xyPlane
+        = hoveredPart === GizmoPart.xyPlane
           ? gizmo._planeHighlightMaterial
           : gizmo._xyPlaneMaterial
       const xzPlaneMaterial
-        = defined(hovered) && hovered.id === GizmoPart.xzPlane
+        = hoveredPart === GizmoPart.xzPlane
           ? gizmo._planeHighlightMaterial
           : gizmo._xzPlaneMaterial
       const yzPlaneMaterial
-        = defined(hovered) && hovered.id === GizmoPart.yzPlane
+        = hoveredPart === GizmoPart.yzPlane
           ? gizmo._planeHighlightMaterial
           : gizmo._yzPlaneMaterial
 
@@ -828,25 +844,25 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo, isLeftClick
       }
 
       // 根据悬停的轴或平面显示/隐藏辅助线
-      if (defined(hovered)) {
-        if (hovered.id === GizmoPart.xAxis) {
+      if (hoveredPart) {
+        if (hoveredPart === GizmoPart.xAxis) {
           gizmo.setHelperLineVisible(GizmoPart.xAxis)
         }
-        else if (hovered.id === GizmoPart.yAxis) {
+        else if (hoveredPart === GizmoPart.yAxis) {
           gizmo.setHelperLineVisible(GizmoPart.yAxis)
         }
-        else if (hovered.id === GizmoPart.zAxis) {
+        else if (hoveredPart === GizmoPart.zAxis) {
           gizmo.setHelperLineVisible(GizmoPart.zAxis)
         }
-        else if (hovered.id === GizmoPart.xyPlane) {
+        else if (hoveredPart === GizmoPart.xyPlane) {
           // XY 平面显示 X 和 Y 辅助线
           gizmo.setHelperLineVisible([GizmoPart.xAxis, GizmoPart.yAxis])
         }
-        else if (hovered.id === GizmoPart.xzPlane) {
+        else if (hoveredPart === GizmoPart.xzPlane) {
           // XZ 平面显示 X 和 Z 辅助线
           gizmo.setHelperLineVisible([GizmoPart.xAxis, GizmoPart.zAxis])
         }
-        else if (hovered.id === GizmoPart.yzPlane) {
+        else if (hoveredPart === GizmoPart.yzPlane) {
           // YZ 平面显示 Y 和 Z 辅助线
           gizmo.setHelperLineVisible([GizmoPart.yAxis, GizmoPart.zAxis])
         }
@@ -1305,6 +1321,8 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo, isLeftClick
         gizmo.onGizmoPointerMove({
             mode: GizmoMode.rotate,
             coordinateMode: CoordinateMode.local,
+            pickedPart: pickedGizmoId,
+            deltaAngleRadians: frameAngle,
             result: Transforms.fixedFrameToHeadingPitchRoll(resultMatrix),
           })
         }
@@ -1410,6 +1428,8 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo, isLeftClick
         gizmo.onGizmoPointerMove({
             mode: GizmoMode.rotate,
             coordinateMode: CoordinateMode.surface,
+            pickedPart: pickedGizmoId,
+            deltaAngleRadians: frameAngle,
             result: Transforms.fixedFrameToHeadingPitchRoll(resultMatrix),
           })
         }
