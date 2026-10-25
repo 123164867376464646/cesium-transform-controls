@@ -163,6 +163,7 @@ new Gizmo(options?: {
   onGizmoPointerDown?: (event: GizmoPointerDownEvent) => void
   onGizmoPointerUp?: (event: GizmoPointerUpEvent) => void
   onGizmoPointerMove?: (event: GizmoPointerMoveEvent) => void
+  onGizmoHoverChanged?: (event: GizmoHoverChangedEvent) => void
   /** 
    * 是否使用左键触发操作（默认 true）
    * 即默认点击左键触发节点绑定操作 

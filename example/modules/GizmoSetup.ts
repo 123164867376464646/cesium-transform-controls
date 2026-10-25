@@ -1,5 +1,5 @@
 import type * as Cesium from 'cesium'
-import type { Gizmo, GizmoPointerDownEvent, GizmoPointerMoveEvent, GizmoPointerUpEvent } from 'cesium-transform-controls'
+import type { Gizmo, GizmoHoverChangedEvent, GizmoPointerDownEvent, GizmoPointerMoveEvent, GizmoPointerUpEvent } from 'cesium-transform-controls'
 import { GizmoMode, CoordinateMode } from 'cesium-transform-controls'
 
 export function setupGizmo(
@@ -18,6 +18,9 @@ export function setupGizmo(
     },
     onGizmoPointerUp: (event: GizmoPointerUpEvent) => {
       console.log('[Gizmo Up]', event)
+    },
+    onGizmoHoverChanged: (event: GizmoHoverChangedEvent) => {
+      console.log('[Gizmo Hover]', event)
     }
   }
 

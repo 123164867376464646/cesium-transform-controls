@@ -541,6 +541,8 @@ const scratchRotationWithScale = new Matrix3()
 let rotateAccumulatedAngle = 0  // 累积旋转角度
 let rotateStartEnuMatrix = new Matrix4()  // Surface 模式起始 ENU 矩阵
 
+// 上一次悬停的 Gizmo 部件, 用于判断悬停状态是否真正变化
+let lastHoveredPart: GizmoPart | null | undefined
 
 /**
  * 添加指针事件处理程序到 Cesium Viewer
@@ -654,6 +656,8 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo, isLeftClick
       if (pickedPart) {
         // 选中 Gizmo
         pickedGizmoId = pickedPart
+        // 拖拽期间不处理悬停, 重置悬停状态以便松开后重新同步
+        lastHoveredPart = undefined
 
         // 保存原始相机事件类型配置
         const controller = viewer.scene.screenSpaceCameraController
@@ -742,6 +746,7 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo, isLeftClick
       mountedPrimitiveStartModelMatrix = new Matrix4()
       rotateAccumulatedAngle = 0  // 清除 Rotate 累积角度
       rotateStartEnuMatrix = new Matrix4()  // 清除 Rotate ENU 起始矩阵
+      lastHoveredPart = undefined  // 拖拽结束, 重置悬停状态以便下一次移动重新判定
       gizmo._isInteracting = false
 
 
@@ -786,6 +791,9 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo, isLeftClick
     if (!pickedGizmoId) {
       const hovered = viewer.scene.pick(movement.endPosition)
       const hoveredPart = getPickableGizmoPart(gizmo, hovered)
+      const previousPart = lastHoveredPart
+      const hoverChanged = hoveredPart !== previousPart
+      lastHoveredPart = hoveredPart
       const xMaterial
         = hoveredPart === GizmoPart.xAxis
           ? gizmo._highlightMaterial
@@ -872,6 +880,14 @@ export function addPointerEventHandler(viewer: Viewer, gizmo: Gizmo, isLeftClick
       }
       else {
         gizmo.setHelperLineVisible(null)
+      }
+
+      if (hoverChanged && typeof gizmo.onGizmoHoverChanged === 'function') {
+        gizmo.onGizmoHoverChanged({
+          mode: gizmo.mode,
+          part: hoveredPart,
+          previousPart: previousPart ?? null,
+        })
       }
 
       return
@@ -1640,6 +1656,7 @@ export function removePointerEventHandler() {
   handler.removeInputAction(ScreenSpaceEventType.MOUSE_MOVE)
   handler.destroy()
   handler = undefined
+  lastHoveredPart = undefined
 }
 
 function getTrans(gizmoPartId: GizmoPart, viewer: Viewer, mouseDirOnWindowCoordinates: Cartesian2, gizmo: Gizmo) {

@@ -123,10 +123,20 @@ export interface GizmoPointerBaseEvent {
 export type GizmoPointerDownEvent = GizmoPointerBaseEvent
 export type GizmoPointerUpEvent = GizmoPointerBaseEvent
 
+export interface GizmoHoverChangedEvent {
+  /** 当前模式 */
+  mode: GizmoMode | null
+  /** 当前悬停的部件, 离开控件时为 null */
+  part: GizmoPart | null
+  /** 上一个悬停的部件 */
+  previousPart: GizmoPart | null
+}
+
 interface GizmoOptions {
   onGizmoPointerDown?: (event: GizmoPointerDownEvent) => void
   onGizmoPointerUp?: (event: GizmoPointerUpEvent) => void
   onGizmoPointerMove?: (event: GizmoPointerMoveEvent) => void
+  onGizmoHoverChanged?: (event: GizmoHoverChangedEvent) => void
   // 包围盒显示选项
   showLocalBounds?: boolean // 显示模型空间边界，默认 false
   showWorldAABB?: boolean // 显示世界空间AABB，默认 false
@@ -164,6 +174,7 @@ export class Gizmo {
   onGizmoPointerDown: ((event: GizmoPointerDownEvent) => void) | undefined
   onGizmoPointerUp: ((event: GizmoPointerUpEvent) => void) | undefined
   onGizmoPointerMove: ((event: GizmoPointerMoveEvent) => void) | undefined
+  onGizmoHoverChanged: ((event: GizmoHoverChangedEvent) => void) | undefined
   autoSyncMountedPrimitive: boolean
   _isInteracting: boolean
   _lastSyncedPosition: Cartesian3 | null
@@ -233,6 +244,7 @@ export class Gizmo {
     this.onGizmoPointerDown = options.onGizmoPointerDown
     this.onGizmoPointerUp = options.onGizmoPointerUp
     this.onGizmoPointerMove = options.onGizmoPointerMove
+    this.onGizmoHoverChanged = options.onGizmoHoverChanged
     this.autoSyncMountedPrimitive = true
     this._isInteracting = false
     this._lastSyncedPosition = null
